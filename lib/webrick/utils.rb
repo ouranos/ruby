@@ -65,7 +65,9 @@ module WEBrick
     module_function :getservername
 
     ##
-    # Creates a TCP server socket bound to +address+:+port+ and returns it
+    # Creates TCP server sockets bound to +address+:+port+ and returns them.
+    #
+    # It will create IPV4 and IPV6 sockets on all interfaces.
     def create_listeners(address, port, logger=nil)
       unless port
         raise ArgumentError, "must specify port"
@@ -221,7 +223,7 @@ module WEBrick
 
     ##
     # Executes the passed block and raises +exception+ if execution takes more
-    # than +seconds+ seconds.
+    # than +seconds+.
     # If +seconds+ is zero or nil, simply executes the block
     def timeout(seconds, exception=Timeout::Error)
       return yield if seconds.nil? or seconds.zero?
