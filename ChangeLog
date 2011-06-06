@@ -1,3 +1,83 @@
+Mon Jun  6 09:39:43 2011  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/parser.c (parse): release event objects to plug memory
+	leak.  Thanks Mark J. Titorenko!
+
+Sun Jun  5 23:26:15 2011  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* eval.c: remove rb_thread_stop_timer_thread function declaration.
+	  Instead, include vm_core.h.
+	* process.c: ditto.
+
+Sun Jun  5 21:38:51 2011  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* thread_pthread.c (thread_timer): add to care a spurious wakeup.
+	  When native_cond_timedwait() return 0 by spurious wakeup, we
+	  don't have to neither 1) call timer_thread_function and 2)
+	  exit the timer thread.
+
+Sun Jun  5 17:50:01 2011  Tadayoshi Funaba  <tadf@dotrb.org>
+
+	* ext/date/date_core.c (m_real_cwyear): new.  derived from m_cwyear.
+	* ext/date/date_strftime.c: trivial changes.
+
+Sun Jun  5 17:22:01 2011  Hidetoshi NAGAI  <nagai@ai.kyutech.ac.jp>
+
+	* ext/tk/config_list.in: add new options for tcltklib.
+
+Sun Jun  5 10:06:50 2011  Tadayoshi Funaba  <tadf@dotrb.org>
+
+	* ext/date/date_tmx.h: now does not place decoded data.  allows to
+	  access indirectly via functions on demand.
+	* ext/date/date_strftime.c: ditto.
+	* ext/date/date_core.c: ditto.
+	* ext/date/date_core.c ({d|dt}_lite_to_s): use strftime.
+
+Sun Jun  5 06:22:02 2011  Tadayoshi Funaba  <tadf@dotrb.org>
+
+	* NEWS: wrote about changes of date.
+
+Sat Jun  4 16:59:26 2011  Tadayoshi Funaba  <tadf@dotrb.org>
+
+	* ext/date/date_core.c (d_lite_inspect): changed the format.
+	* ext/date/date_core.c: refactoring and fixing some bugs.
+
+Sat Jun  4 11:30:57 2011  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* class.c (check_mix_method_i, do_mix_method_i): not mix methods
+	  renamed as nil.
+
+Sat Jun  4 04:04:41 2011  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* test/rubygems/test_gem_commands_which_command.rb:
+	  "missing" exists on ruby's top source directory. [Bug #4815]
+
+Fri Jun  3 21:48:12 2011  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* lib/rubygems/test_case.rb: Refix for test-all in separate directory.
+	  r31147 + r31151.
+
+Fri Jun  3 20:58:47 2011  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* ext/date/date_core.c (d_lite_plus): get rid of compiler warnings.
+
+Fri Jun  3 20:56:40 2011  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* include/ruby/missing.h, numeric.c (round): moved prototype of round()
+	  from numeric.c to missing.h.  (note: round() is C99 feature, so ruby
+	  provides it if not exist in C runtime.)
+
+Fri Jun  3 20:42:04 2011  Shota Fukumori  <sorah@tubusu.net>
+
+	* lib/test/unit/parallel.rb: Keep $stdin, $stdout before run testcase
+	  and restore after run. Because some test break $stdin, $stdout.
+	  Fixes [Bug #4433] [ruby-core:35353]
+
+Fri Jun  3 19:58:14 2011  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* io.c (io_fflush): windows -- call fsync() only when the FD is tied to
+	  file, because if the FD is pipe, it blocks.
+
 Fri Jun  3 09:27:31 2011  NARUSE, Yui  <naruse@ruby-lang.org>
 
 	* lib/net/http.rb (URI::HTTP#request_uri): return nil when the uri

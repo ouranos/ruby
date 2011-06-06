@@ -14,130 +14,12 @@
 #include RUBY_EXTCONF_H
 #endif
 
-#define USE_DPK
+#define USE_PACK
 
 static ID id_cmp, id_le_p, id_ge_p, id_eqeq_p;
 static VALUE cDate, cDateTime;
 static VALUE half_days_in_day, unix_epoch_in_ajd, day_in_nanoseconds;
 static double positive_inf, negative_inf;
-
-#define HAVE_JD     (1 << 0)
-#define HAVE_DF     (1 << 1)
-#define HAVE_CIVIL  (1 << 2)
-#define HAVE_TIME   (1 << 3)
-#define COMPLEX_DAT (1 << 7)
-
-#define have_jd_p(x) ((x)->flags & HAVE_JD)
-#define have_df_p(x) ((x)->flags & HAVE_DF)
-#define have_civil_p(x) ((x)->flags & HAVE_CIVIL)
-#define have_time_p(x) ((x)->flags & HAVE_TIME)
-#define complex_dat_p(x) ((x)->flags & COMPLEX_DAT)
-#define simple_dat_p(x) (!complex_dat_p(x))
-
-#define ITALY 2299161
-#define ENGLAND 2361222
-#define JULIAN positive_inf
-#define GREGORIAN negative_inf
-#define DEFAULT_SG ITALY
-
-#define UNIX_EPOCH_IN_AJD unix_epoch_in_ajd /* 1970-01-01 */
-#define UNIX_EPOCH_IN_CJD INT2FIX(2440588)
-
-#define MINUTE_IN_SECONDS 60
-#define HOUR_IN_SECONDS 3600
-#define DAY_IN_SECONDS 86400
-#define SECOND_IN_NANOSECONDS 1000000000
-
-#define JC_PERIOD0      1461 /* 365.25 * 4 */
-#define GC_PERIOD0 146097 /* 365.2425 * 400 */
-#define CM_PERIOD0 71149239 /* (lcm 7 1461 146097) */
-#define CM_PERIOD (0xfffffff / CM_PERIOD0 * CM_PERIOD0)
-#define CM_PERIOD_JCY (CM_PERIOD / JC_PERIOD0 * 4)
-#define CM_PERIOD_GCY (CM_PERIOD / GC_PERIOD0 * 400)
-
-#ifdef USE_PACK
-#define SEC_WIDTH  6
-#define MIN_WIDTH  6
-#define HOUR_WIDTH 5
-#define MDAY_WIDTH 5
-#define MON_WIDTH  4
-
-#define SEC_SHIFT  0
-#define MIN_SHIFT  SEC_WIDTH
-#define HOUR_SHIFT (MIN_WIDTH + SEC_WIDTH)
-#define MDAY_SHIFT (HOUR_WIDTH + MIN_WIDTH + SEC_WIDTH)
-#define MON_SHIFT  (MDAY_WIDTH + HOUR_WIDTH + MIN_WIDTH + SEC_WIDTH)
-
-#define PK_MASK(x) ((1 << (x)) - 1)
-
-#define EX_SEC(x)  (((x) >> SEC_SHIFT)  & PK_MASK(SEC_WIDTH))
-#define EX_MIN(x)  (((x) >> MIN_SHIFT)  & PK_MASK(MIN_WIDTH))
-#define EX_HOUR(x) (((x) >> HOUR_SHIFT) & PK_MASK(HOUR_WIDTH))
-#define EX_MDAY(x) (((x) >> MDAY_SHIFT) & PK_MASK(MDAY_WIDTH))
-#define EX_MON(x)  (((x) >> MON_SHIFT)  & PK_MASK(MON_WIDTH))
-
-#define PACK5(m,d,h,min,s) \
-    (((m) << MON_SHIFT) | ((d) << MDAY_SHIFT) |\
-     ((h) << HOUR_SHIFT) | ((min) << MIN_SHIFT) | ((s) << SEC_SHIFT))
-
-#define PACK2(m,d) \
-    (((m) << MON_SHIFT) | ((d) << MDAY_SHIFT))
-#endif
-
-struct SimpleDateData
-{
-    unsigned flags;
-    VALUE nth;	/* not always canonicalized */
-    int jd;	/* as utc */
-    double sg;  /* -oo, 2299161..2451910 or +oo */
-    /* decoded as utc=local */
-    int year;	/* truncated */
-#ifndef USE_PACK
-    int mon;
-    int mday;
-#else
-    /* packed civil */
-    unsigned pd;
-#endif
-};
-
-struct ComplexDateData
-{
-    unsigned flags;
-    VALUE nth;	/* not always canonicalized */
-    int jd; 	/* as utc */
-    int df;	/* as utc, in secs */
-    VALUE sf;	/* in nano secs */
-    int of;	/* in secs */
-    double sg;  /* -oo, 2299161..2451910 or +oo */
-    /* decoded as local */
-    int year;	/* truncated */
-#ifndef USE_PACK
-    int mon;
-    int mday;
-    int hour;
-    int min;
-    int sec;
-#else
-    /* packed civil */
-    unsigned pd;
-#endif
-};
-
-union DateData {
-    unsigned flags;
-    struct SimpleDateData s;
-    struct ComplexDateData c;
-};
-
-#define get_d1(x)\
-    union DateData *dat;\
-    Data_Get_Struct(x, union DateData, dat);
-
-#define get_d2(x,y)\
-    union DateData *adat, *bdat;\
-    Data_Get_Struct(x, union DateData, adat);\
-    Data_Get_Struct(y, union DateData, bdat);
 
 #define f_boolcast(x) ((x) ? Qtrue : Qfalse)
 
@@ -218,8 +100,6 @@ f_eqeq_p(VALUE x, VALUE y)
     return rb_funcall(x, rb_intern("=="), 1, y);
 }
 
-#define f_equal_p(x,y) rb_funcall(x, rb_intern("==="), 1, y)
-
 inline static VALUE
 f_zero_p(VALUE x)
 {
@@ -231,7 +111,6 @@ f_zero_p(VALUE x)
       case T_RATIONAL:
 	{
 	    VALUE num = RRATIONAL(x)->num;
-
 	    return f_boolcast(FIXNUM_P(num) && FIX2LONG(num) == 0);
 	}
     }
@@ -268,7 +147,271 @@ f_negative_p(VALUE x)
 #define DIV(n,d) ((n)<0 ? NDIV((n),(d)) : (n)/(d))
 #define MOD(n,d) ((n)<0 ? NMOD((n),(d)) : (n)%(d))
 
-/* light base */
+#define HAVE_JD     (1 << 0)
+#define HAVE_DF     (1 << 1)
+#define HAVE_CIVIL  (1 << 2)
+#define HAVE_TIME   (1 << 3)
+#define COMPLEX_DAT (1 << 7)
+
+#define have_jd_p(x) ((x)->flags & HAVE_JD)
+#define have_df_p(x) ((x)->flags & HAVE_DF)
+#define have_civil_p(x) ((x)->flags & HAVE_CIVIL)
+#define have_time_p(x) ((x)->flags & HAVE_TIME)
+#define complex_dat_p(x) ((x)->flags & COMPLEX_DAT)
+#define simple_dat_p(x) (!complex_dat_p(x))
+
+#define ITALY 2299161
+#define ENGLAND 2361222
+#define JULIAN positive_inf
+#define GREGORIAN negative_inf
+#define DEFAULT_SG ITALY
+
+#define UNIX_EPOCH_IN_AJD unix_epoch_in_ajd /* 1970-01-01 */
+#define UNIX_EPOCH_IN_CJD INT2FIX(2440588)
+
+#define MINUTE_IN_SECONDS 60
+#define HOUR_IN_SECONDS 3600
+#define DAY_IN_SECONDS 86400
+#define SECOND_IN_NANOSECONDS 1000000000
+
+#define JC_PERIOD0 1461		/* 365.25 * 4 */
+#define GC_PERIOD0 146097	/* 365.2425 * 400 */
+#define CM_PERIOD0 71149239	/* (lcm 7 1461 146097) */
+#define CM_PERIOD (0xfffffff / CM_PERIOD0 * CM_PERIOD0)
+#define CM_PERIOD_JCY (CM_PERIOD / JC_PERIOD0 * 4)
+#define CM_PERIOD_GCY (CM_PERIOD / GC_PERIOD0 * 400)
+
+#define REFORM_BEGIN_YEAR 1582
+#define REFORM_END_YEAR   1930
+#define REFORM_BEGIN_JD 2298874	/* ns 1582-01-01 */
+#define REFORM_END_JD   2426355	/* os 1930-12-31 */
+
+#ifdef USE_PACK
+#define SEC_WIDTH  6
+#define MIN_WIDTH  6
+#define HOUR_WIDTH 5
+#define MDAY_WIDTH 5
+#define MON_WIDTH  4
+
+#define SEC_SHIFT  0
+#define MIN_SHIFT  SEC_WIDTH
+#define HOUR_SHIFT (MIN_WIDTH + SEC_WIDTH)
+#define MDAY_SHIFT (HOUR_WIDTH + MIN_WIDTH + SEC_WIDTH)
+#define MON_SHIFT  (MDAY_WIDTH + HOUR_WIDTH + MIN_WIDTH + SEC_WIDTH)
+
+#define PK_MASK(x) ((1 << (x)) - 1)
+
+#define EX_SEC(x)  (((x) >> SEC_SHIFT)  & PK_MASK(SEC_WIDTH))
+#define EX_MIN(x)  (((x) >> MIN_SHIFT)  & PK_MASK(MIN_WIDTH))
+#define EX_HOUR(x) (((x) >> HOUR_SHIFT) & PK_MASK(HOUR_WIDTH))
+#define EX_MDAY(x) (((x) >> MDAY_SHIFT) & PK_MASK(MDAY_WIDTH))
+#define EX_MON(x)  (((x) >> MON_SHIFT)  & PK_MASK(MON_WIDTH))
+
+#define PACK5(m,d,h,min,s) \
+    (((m) << MON_SHIFT) | ((d) << MDAY_SHIFT) |\
+     ((h) << HOUR_SHIFT) | ((min) << MIN_SHIFT) | ((s) << SEC_SHIFT))
+
+#define PACK2(m,d) \
+    (((m) << MON_SHIFT) | ((d) << MDAY_SHIFT))
+#endif
+
+#ifdef HAVE_FLOAT_H
+#include <float.h>
+#endif
+
+#if defined(FLT_RADIX) && defined(FLT_MANT_DIG)
+#if FLT_RADIX == 2 && FLT_MANT_DIG > 22
+#define USE_FLOAT
+#define sg_cast float
+#else
+#define sg_cast double
+#endif
+#endif
+
+struct SimpleDateData
+{
+    unsigned flags;
+    VALUE nth;	/* not always canonicalized */
+    int jd;	/* as utc */
+#ifndef USE_FLOAT
+    double sg;  /* 2298874..2426355 or -/+oo */
+#else
+    float sg;	/* at most 22 bits */
+#endif
+    /* decoded as utc=local */
+    int year;	/* truncated */
+#ifndef USE_PACK
+    int mon;
+    int mday;
+#else
+    /* packed civil */
+    unsigned pc;
+#endif
+};
+
+struct ComplexDateData
+{
+    unsigned flags;
+    VALUE nth;	/* not always canonicalized */
+    int jd; 	/* as utc */
+    int df;	/* as utc, in secs */
+    VALUE sf;	/* in nano secs */
+    int of;	/* in secs */
+#ifndef USE_FLOAT
+    double sg;  /* 2298874..2426355 or -/+oo */
+#else
+    float sg;	/* at most 22 bits */
+#endif
+    /* decoded as local */
+    int year;	/* truncated */
+#ifndef USE_PACK
+    int mon;
+    int mday;
+    int hour;
+    int min;
+    int sec;
+#else
+    /* packed civil */
+    unsigned pc;
+#endif
+};
+
+union DateData {
+    unsigned flags;
+    struct SimpleDateData s;
+    struct ComplexDateData c;
+};
+
+#define get_d1(x)\
+    union DateData *dat;\
+    Data_Get_Struct(x, union DateData, dat);
+
+#define get_d1a(x)\
+    union DateData *adat;\
+    Data_Get_Struct(x, union DateData, adat);
+
+#define get_d1b(x)\
+    union DateData *bdat;\
+    Data_Get_Struct(x, union DateData, bdat);
+
+#define get_d2(x,y)\
+    union DateData *adat, *bdat;\
+    Data_Get_Struct(x, union DateData, adat);\
+    Data_Get_Struct(y, union DateData, bdat);
+
+#ifndef USE_PACK
+#define set_to_simple(x, _nth, _jd ,_sg, _year, _mon, _mday, _flags) \
+{\
+    (x)->nth = _nth;\
+    (x)->jd = _jd;\
+    (x)->sg = (sg_cast)(_sg);\
+    (x)->year = _year;\
+    (x)->mon = _mon;\
+    (x)->mday = _mday;\
+    (x)->flags = _flags;\
+}
+#else
+#define set_to_simple(x, _nth, _jd ,_sg, _year, _mon, _mday, _flags) \
+{\
+    (x)->nth = _nth;\
+    (x)->jd = _jd;\
+    (x)->sg = (sg_cast)(_sg);\
+    (x)->year = _year;\
+    (x)->pc = PACK2(_mon, _mday);\
+    (x)->flags = _flags;\
+}
+#endif
+
+#ifndef USE_PACK
+#define set_to_complex(x, _nth, _jd ,_df, _sf, _of, _sg,\
+_year, _mon, _mday, _hour, _min, _sec, _flags) \
+{\
+    (x)->nth = _nth;\
+    (x)->jd = _jd;\
+    (x)->df = _df;\
+    (x)->sf = _sf;\
+    (x)->of = _of;\
+    (x)->sg = (sg_cast)(_sg);\
+    (x)->year = _year;\
+    (x)->mon = _mon;\
+    (x)->mday = _mday;\
+    (x)->hour = _hour;\
+    (x)->min = _min;\
+    (x)->sec = _sec;\
+    (x)->flags = _flags;\
+}
+#else
+#define set_to_complex(x, _nth, _jd ,_df, _sf, _of, _sg,\
+_year, _mon, _mday, _hour, _min, _sec, _flags) \
+{\
+    (x)->nth = _nth;\
+    (x)->jd = _jd;\
+    (x)->df = _df;\
+    (x)->sf = _sf;\
+    (x)->of = _of;\
+    (x)->sg = (sg_cast)(_sg);\
+    (x)->year = _year;\
+    (x)->pc = PACK5(_mon, _mday, _hour, _min, _sec);\
+    (x)->flags = _flags;\
+}
+#endif
+
+#ifndef USE_PACK
+#define copy_simple_to_complex(x, y) \
+{\
+    (x)->nth = (y)->nth;\
+    (x)->jd = (y)->jd;\
+    (x)->df = 0;\
+    (x)->sf = INT2FIX(0);\
+    (x)->of = 0;\
+    (x)->sg = (sg_cast)((y)->sg);\
+    (x)->year = (y)->year;\
+    (x)->mon = (y)->mon;\
+    (x)->mday = (y)->mday;\
+    (x)->hour = 0;\
+    (x)->min = 0;\
+    (x)->sec = 0;\
+    (x)->flags = (y)->flags;\
+}
+#else
+#define copy_simple_to_complex(x, y) \
+{\
+    (x)->nth = (y)->nth;\
+    (x)->jd = (y)->jd;\
+    (x)->df = 0;\
+    (x)->sf = INT2FIX(0);\
+    (x)->of = 0;\
+    (x)->sg = (sg_cast)((y)->sg);\
+    (x)->year = (y)->year;\
+    (x)->pc = PACK5(EX_MON((y)->pc), EX_MDAY((y)->pc), 0, 0, 0);\
+    (x)->flags = (y)->flags;\
+}
+#endif
+
+#ifndef USE_PACK
+#define copy_complex_to_simple(x, y) \
+{\
+    (x)->nth = (y)->nth;\
+    (x)->jd = (y)->jd;\
+    (x)->sg = (sg_cast)((y)->sg);\
+    (x)->year = (y)->year;\
+    (x)->mon = (y)->mon;\
+    (x)->mday = (y)->mday;\
+    (x)->flags = (y)->flags;\
+}
+#else
+#define copy_complex_to_simple(x, y) \
+{\
+    (x)->nth = (y)->nth;\
+    (x)->jd = (y)->jd;\
+    (x)->sg = (sg_cast)((y)->sg);\
+    (x)->year = (y)->year;\
+    (x)->pc = PACK5(EX_MON((y)->pc), EX_MDAY((y)->pc), 0, 0, 0);\
+    (x)->flags = (y)->flags;\
+}
+#endif
+
+/* base */
 
 static int c_valid_civil_p(int, int, int, double,
 			   int *, int *, int *, int *);
@@ -518,15 +661,48 @@ static const int monthtab[2][13] = {
 };
 
 inline static int
-c_leap_p(int y)
+c_julian_leap_p(int y)
 {
-    return (MOD(y, 4) == 0 && y % 100 != 0) || (MOD(y, 400) == 0);
+    return MOD(y, 4) == 0;
+}
+
+inline static int
+c_gregorian_leap_p(int y)
+{
+    return MOD(y, 4) == 0 && y % 100 != 0 || MOD(y, 400) == 0;
 }
 
 static int
-c_last_day_of_month(int y, int m)
+c_julian_last_day_of_month(int y, int m)
 {
-    return monthtab[c_leap_p(y) ? 1 : 0][m];
+    assert(m >= 1 && m <= 12);
+    return monthtab[c_julian_leap_p(y) ? 1 : 0][m];
+}
+
+static int
+c_gregorian_last_day_of_month(int y, int m)
+{
+    assert(m >= 1 && m <= 12);
+    return monthtab[c_gregorian_leap_p(y) ? 1 : 0][m];
+}
+
+static int
+c_valid_julian_p(int y, int m, int d, int *rm, int *rd)
+{
+    int last;
+
+    if (m < 0)
+	m += 13;
+    if (m < 0 || m > 12)
+	return 0;
+    last = c_julian_last_day_of_month(y, m);
+    if (d < 0)
+	d = last + d + 1;
+    if (d < 1 || d > last)
+	return 0;
+    *rm = m;
+    *rd = d;
+    return 1;
 }
 
 static int
@@ -536,15 +712,16 @@ c_valid_gregorian_p(int y, int m, int d, int *rm, int *rd)
 
     if (m < 0)
 	m += 13;
-    last = c_last_day_of_month(y, m);
+    if (m < 0 || m > 12)
+	return 0;
+    last = c_gregorian_last_day_of_month(y, m);
     if (d < 0)
 	d = last + d + 1;
-
+    if (d < 1 || d > last)
+	return 0;
     *rm = m;
     *rd = d;
-
-    return !(m < 0 || m > 12 ||
-	     d < 1 || d > last);
+    return 1;
 }
 
 static int
@@ -666,15 +843,16 @@ c_valid_time_p(int h, int min, int s, int *rh, int *rmin, int *rs)
 	     (h == 24 && (min > 0 || s > 0)));
 }
 
-static int
+inline static int
 c_valid_start_p(double sg)
 {
     if (!isinf(sg)) {
-	if (sg < ITALY)
+	if (sg < REFORM_BEGIN_JD)
 	    return 0;
-	if (sg > 2451910)
+	if (sg > REFORM_END_JD)
 	    return 0;
-    }
+    } else if (isnan(sg))
+	return 0;
     return 1;
 }
 
@@ -728,13 +906,22 @@ time_to_df(int h, int min, int s)
     return h * HOUR_IN_SECONDS + min * MINUTE_IN_SECONDS + s;
 }
 
+inline static void
+df_to_time(int df, int *h, int *min, int *s)
+{
+    *h = df / HOUR_IN_SECONDS;
+    df %= HOUR_IN_SECONDS;
+    *min = df / MINUTE_IN_SECONDS;
+    *s = df % MINUTE_IN_SECONDS;
+}
+
 static VALUE
 sec_to_day(VALUE s)
 {
     return f_quo(s, INT2FIX(DAY_IN_SECONDS));
 }
 
-static VALUE
+inline static VALUE
 isec_to_day(int s)
 {
     return sec_to_day(INT2FIX(s));
@@ -753,16 +940,31 @@ ns_to_sec(VALUE n)
 }
 
 #ifndef NDEBUG
-static VALUE
+inline static VALUE
 ins_to_day(int n)
 {
     return ns_to_day(INT2FIX(n));
 }
 #endif
 
+static int
+safe_mul_p(VALUE x, long m)
+{
+    long ix;
+
+    if (!FIXNUM_P(x))
+	return 0;
+    ix = FIX2LONG(x);
+    if (ix >= (FIXNUM_MAX / m))
+	return 0;
+    return 1;
+}
+
 static VALUE
 day_to_sec(VALUE d)
 {
+    if (safe_mul_p(d, DAY_IN_SECONDS))
+	return LONG2FIX(FIX2LONG(d) * DAY_IN_SECONDS);
     return f_mul(d, INT2FIX(DAY_IN_SECONDS));
 }
 
@@ -777,6 +979,8 @@ day_to_ns(VALUE d)
 static VALUE
 sec_to_ns(VALUE s)
 {
+    if (safe_mul_p(s, SECOND_IN_NANOSECONDS))
+	return LONG2FIX(FIX2LONG(s) * SECOND_IN_NANOSECONDS);
     return f_mul(s, INT2FIX(SECOND_IN_NANOSECONDS));
 }
 
@@ -844,6 +1048,15 @@ c_sg(union DateData *x)
     return negative_inf;
 }
 
+inline static double
+x_sg(union DateData *x)
+{
+    if (simple_dat_p(x))
+	return s_sg(x);
+    else
+	return c_sg(x);
+}
+
 inline static void
 get_s_jd(union DateData *x)
 {
@@ -855,7 +1068,7 @@ get_s_jd(union DateData *x)
 #ifndef USE_PACK
 	c_civil_to_jd(x->s.year, x->s.mon, x->s.mday, s_sg(x), &jd, &ns);
 #else
-	c_civil_to_jd(x->s.year, EX_MON(x->s.pd), EX_MDAY(x->s.pd),
+	c_civil_to_jd(x->s.year, EX_MON(x->s.pc), EX_MDAY(x->s.pc),
 		      s_sg(x), &jd, &ns);
 #endif
 	x->s.jd = jd;
@@ -877,7 +1090,7 @@ get_s_civil(union DateData *x)
 	x->s.mon = m;
 	x->s.mday = d;
 #else
-	x->s.pd = PACK2(m, d);
+	x->s.pc = PACK2(m, d);
 #endif
 	x->s.flags |= HAVE_CIVIL;
     }
@@ -893,9 +1106,9 @@ get_c_df(union DateData *x)
 	x->c.df = df_local_to_utc(time_to_df(x->c.hour, x->c.min, x->c.sec),
 				  x->c.of);
 #else
-	x->c.df = df_local_to_utc(time_to_df(EX_HOUR(x->c.pd),
-					     EX_MIN(x->c.pd),
-					     EX_SEC(x->c.pd)),
+	x->c.df = df_local_to_utc(time_to_df(EX_HOUR(x->c.pc),
+					     EX_MIN(x->c.pc),
+					     EX_SEC(x->c.pc)),
 				  x->c.of);
 #endif
 	x->c.flags |= HAVE_DF;
@@ -911,23 +1124,17 @@ get_c_time(union DateData *x)
 	int r;
 	assert(have_df_p(x));
 	r = df_utc_to_local(x->c.df, x->c.of);
-	x->c.hour = r / HOUR_IN_SECONDS;
-	r %= HOUR_IN_SECONDS;
-	x->c.min = r / MINUTE_IN_SECONDS;
-	x->c.sec = r % MINUTE_IN_SECONDS;
+	df_to_time(r, &x->c.hour, &x->c.min, &x->c.sec);
 	x->c.flags |= HAVE_TIME;
 #else
 	int r, m, d, h, min, s;
 
 	assert(have_df_p(x));
+	m = EX_MON(x->c.pc);
+	d = EX_MDAY(x->c.pc);
 	r = df_utc_to_local(x->c.df, x->c.of);
-	m = EX_MON(x->c.pd);
-	d = EX_MDAY(x->c.pd);
-	h = r / HOUR_IN_SECONDS;
-	r %= HOUR_IN_SECONDS;
-	min = r / MINUTE_IN_SECONDS;
-	s = r % MINUTE_IN_SECONDS;
-	x->c.pd = PACK5(m, d, h, min, s);
+	df_to_time(r, &h, &min, &s);
+	x->c.pc = PACK5(m, d, h, min, s);
 	x->c.flags |= HAVE_TIME;
 #endif
     }
@@ -944,7 +1151,7 @@ get_c_jd(union DateData *x)
 #ifndef USE_PACK
 	c_civil_to_jd(x->c.year, x->c.mon, x->c.mday, c_sg(x), &jd, &ns);
 #else
-	c_civil_to_jd(x->c.year, EX_MON(x->c.pd), EX_MDAY(x->c.pd),
+	c_civil_to_jd(x->c.year, EX_MON(x->c.pc), EX_MDAY(x->c.pc),
 		      c_sg(x), &jd, &ns);
 #endif
 
@@ -955,9 +1162,9 @@ get_c_jd(union DateData *x)
 				  x->c.of);
 #else
 	x->c.jd = jd_local_to_utc(jd,
-				  time_to_df(EX_HOUR(x->c.pd),
-					     EX_MIN(x->c.pd),
-					     EX_SEC(x->c.pd)),
+				  time_to_df(EX_HOUR(x->c.pc),
+					     EX_MIN(x->c.pc),
+					     EX_SEC(x->c.pc)),
 				  x->c.of);
 #endif
 	x->c.flags |= HAVE_JD;
@@ -984,10 +1191,10 @@ get_c_civil(union DateData *x)
 	x->c.mon = m;
 	x->c.mday = d;
 #else
-	h = EX_HOUR(x->c.pd);
-	min = EX_MIN(x->c.pd);
-	s = EX_SEC(x->c.pd);
-	x->c.pd = PACK5(m, d, h, min, s);
+	h = EX_HOUR(x->c.pc);
+	min = EX_MIN(x->c.pc);
+	s = EX_SEC(x->c.pc);
+	x->c.pc = PACK5(m, d, h, min, s);
 #endif
 	x->c.flags |= HAVE_CIVIL;
     }
@@ -1020,6 +1227,21 @@ decode_year(VALUE y, double style,
     period = (style < 0) ?
 	CM_PERIOD_GCY :
 	CM_PERIOD_JCY;
+    if (FIXNUM_P(y)) {
+	long iy, it, inth;
+
+	iy = FIX2LONG(y);
+	if (iy >= (FIXNUM_MAX - 4712))
+	    goto big;
+	it = iy + 4712; /* shift */
+	inth = DIV(it, ((long)period));
+	*nth = LONG2FIX(inth);
+	if (inth)
+	    it = MOD(it, ((long)period));
+	*ry = (int)it - 4712; /* unshift */
+	return;
+    }
+  big:
     t = f_add(y, INT2FIX(4712)); /* shift */
     *nth = f_idiv(t, INT2FIX(period));
     if (f_nonzero_p(*nth))
@@ -1067,37 +1289,39 @@ encode_jd(VALUE nth, int jd, VALUE *rjd)
     *rjd = f_add(f_mul(INT2FIX(CM_PERIOD), nth), INT2FIX(jd));
 }
 
-static double
+inline static double
 style_p(VALUE y, double sg)
 {
     double style = 0;
 
     if (isinf(sg))
-	style = (sg < 0) ? negative_inf : positive_inf;
+	style = sg;
     else if (!FIXNUM_P(y))
-	style = (f_positive_p(y)) ? negative_inf : positive_inf;
+	style = f_positive_p(y) ? negative_inf : positive_inf;
     else {
-	if (f_lt_p(y, INT2FIX(1582)))
+	long iy = FIX2LONG(y);
+
+	assert(FIXNUM_P(y));
+	if (iy < REFORM_BEGIN_YEAR)
 	    style = positive_inf;
-	else if (f_gt_p(y, INT2FIX(2001)))
+	else if (iy > REFORM_END_YEAR)
 	    style = negative_inf;
     }
     return style;
 }
 
-static VALUE
+inline static VALUE
 m_nth(union DateData *x)
 {
-    if (simple_dat_p(x)) {
+    if (simple_dat_p(x))
 	return x->s.nth;
-    }
     else {
 	get_c_civil(x);
 	return x->c.nth;
     }
 }
 
-static int
+inline static int
 m_jd(union DateData *x)
 {
     if (simple_dat_p(x)) {
@@ -1150,7 +1374,7 @@ m_real_local_jd(union DateData *x)
     return rjd;
 }
 
-static int
+inline static int
 m_df(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1188,7 +1412,7 @@ m_local_df_in_day(union DateData *x)
 }
 #endif
 
-static VALUE
+inline static VALUE
 m_sf(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1235,14 +1459,16 @@ m_ajd(union DateData *x)
     VALUE r, sf;
     int df;
 
-    r = f_sub(m_real_jd(x), half_days_in_day);
     if (simple_dat_p(x))
-	return r;
+	return rb_rational_new2(f_sub(f_mul(m_real_jd(x),
+					    INT2FIX(2)),
+				      INT2FIX(1)),
+				INT2FIX(2));
 
+    r = f_sub(m_real_jd(x), half_days_in_day);
     df = m_df(x);
     if (df)
 	r = f_add(r, isec_to_day(df));
-
     sf = m_sf(x);
     if (f_nonzero_p(sf))
 	r = f_add(r, ns_to_day(sf));
@@ -1250,7 +1476,28 @@ m_ajd(union DateData *x)
     return r;
 }
 
-static int
+static VALUE
+m_amjd(union DateData *x)
+{
+    VALUE r, sf;
+    int df;
+
+    r = rb_rational_new1(f_sub(m_real_jd(x), INT2FIX(2400001)));
+
+    if (simple_dat_p(x))
+	return r;
+
+    df = m_df(x);
+    if (df)
+	r = f_add(r, isec_to_day(df));
+    sf = m_sf(x);
+    if (f_nonzero_p(sf))
+	r = f_add(r, ns_to_day(sf));
+
+    return r;
+}
+
+inline static int
 m_of(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1267,7 +1514,7 @@ m_of_in_day(union DateData *x)
     return isec_to_day(m_of(x));
 }
 
-static double
+inline static double
 m_sg(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1285,10 +1532,12 @@ m_julian_p(union DateData *x)
     double sg;
 
     if (simple_dat_p(x)) {
+	get_s_jd(x);
 	jd = x->s.jd;
 	sg = s_sg(x);
     }
     else {
+	get_c_jd(x);
 	jd = x->c.jd;
 	sg = c_sg(x);
     }
@@ -1297,13 +1546,35 @@ m_julian_p(union DateData *x)
     return jd < sg;
 }
 
-static int
+inline static int
 m_gregorian_p(union DateData *x)
 {
     return !m_julian_p(x);
 }
 
-static int
+inline static int
+m_proleptic_julian_p(union DateData *x)
+{
+    double sg;
+
+    sg = m_sg(x);
+    if (isinf(sg) && sg > 0)
+	return 1;
+    return 0;
+}
+
+inline static int
+m_proleptic_gregorian_p(union DateData *x)
+{
+    double sg;
+
+    sg = m_sg(x);
+    if (isinf(sg) && sg < 0)
+	return 1;
+    return 0;
+}
+
+inline static int
 m_year(union DateData *x)
 {
     if (simple_dat_p(x)) {
@@ -1325,6 +1596,9 @@ m_real_year(union DateData *x)
     nth = m_nth(x);
     year = m_year(x);
 
+    if (f_zero_p(nth))
+	return INT2FIX(year);
+
     encode_year(nth, year,
 		m_gregorian_p(x) ? -1 : +1,
 		&ry);
@@ -1333,21 +1607,22 @@ m_real_year(union DateData *x)
 
 
 #ifdef USE_PACK
-static int
-m_pd(union DateData *x)
+inline static int
+m_pc(union DateData *x)
 {
     if (simple_dat_p(x)) {
 	get_s_civil(x);
-	return x->s.pd;
+	return x->s.pc;
     }
     else {
 	get_c_civil(x);
-	return x->c.pd;
+	get_c_time(x);
+	return x->c.pc;
     }
 }
 #endif
 
-static int
+inline static int
 m_mon(union DateData *x)
 {
     if (simple_dat_p(x)) {
@@ -1355,7 +1630,7 @@ m_mon(union DateData *x)
 #ifndef USE_PACK
 	return x->s.mon;
 #else
-	return EX_MON(x->s.pd);
+	return EX_MON(x->s.pc);
 #endif
     }
     else {
@@ -1363,12 +1638,12 @@ m_mon(union DateData *x)
 #ifndef USE_PACK
 	return x->c.mon;
 #else
-	return EX_MON(x->c.pd);
+	return EX_MON(x->c.pc);
 #endif
     }
 }
 
-static int
+inline static int
 m_mday(union DateData *x)
 {
     if (simple_dat_p(x)) {
@@ -1376,7 +1651,7 @@ m_mday(union DateData *x)
 #ifndef USE_PACK
 	return x->s.mday;
 #else
-	return EX_MDAY(x->s.pd);
+	return EX_MDAY(x->s.pc);
 #endif
     }
     else {
@@ -1384,22 +1659,7 @@ m_mday(union DateData *x)
 #ifndef USE_PACK
 	return x->c.mday;
 #else
-	return EX_MDAY(x->c.pd);
-#endif
-    }
-}
-
-static int
-m_hour(union DateData *x)
-{
-    if (simple_dat_p(x))
-	return 0;
-    else {
-	get_c_time(x);
-#ifndef USE_PACK
-	return x->c.hour;
-#else
-	return EX_HOUR(x->c.pd);
+	return EX_MDAY(x->c.pc);
 #endif
     }
 }
@@ -1410,29 +1670,130 @@ static const int yeartab[2][13] = {
 };
 
 static int
-c_gregorian_to_yday(int y, int m, int d)
+c_julian_to_yday(int y, int m, int d)
 {
-    return yeartab[c_leap_p(y) ? 1 : 0][m] + d;
+    assert(m >= 1 && m <= 12);
+    return yeartab[c_julian_leap_p(y) ? 1 : 0][m] + d;
 }
 
-static void c_jd_to_ordinal(int, double, int *, int *);
+static int
+c_gregorian_to_yday(int y, int m, int d)
+{
+    assert(m >= 1 && m <= 12);
+    return yeartab[c_gregorian_leap_p(y) ? 1 : 0][m] + d;
+}
 
 static int
 m_yday(union DateData *x)
 {
-    double sg;
     int jd, ry, rd;
+    double sg;
 
-    sg = m_sg(x);
     jd = m_local_jd(x);
-    if ((isinf(sg) && sg < 0) ||
+    sg = x_sg(x); /* !=m_sg() */
+
+    if (m_proleptic_gregorian_p(x) ||
 	(jd - sg) > 366)
 	return c_gregorian_to_yday(m_year(x), m_mon(x), m_mday(x));
+    if (m_proleptic_julian_p(x))
+	return c_julian_to_yday(m_year(x), m_mon(x), m_mday(x));
     c_jd_to_ordinal(jd, sg, &ry, &rd);
     return rd;
 }
 
 static int
+m_wday(union DateData *x)
+{
+    return c_jd_to_wday(m_local_jd(x));
+}
+
+static int
+m_cwyear(union DateData *x)
+{
+    int ry, rw, rd;
+
+    c_jd_to_commercial(m_local_jd(x), x_sg(x), /* !=m_sg() */
+		       &ry, &rw, &rd);
+    return ry;
+}
+
+static VALUE
+m_real_cwyear(union DateData *x)
+{
+    VALUE nth, ry;
+    int year;
+
+    nth = m_nth(x);
+    year = m_cwyear(x);
+
+    if (f_zero_p(nth))
+	return INT2FIX(year);
+
+    encode_year(nth, year,
+		m_gregorian_p(x) ? -1 : +1,
+		&ry);
+    return ry;
+}
+
+static int
+m_cweek(union DateData *x)
+{
+    int ry, rw, rd;
+
+    c_jd_to_commercial(m_local_jd(x), x_sg(x), /* !=m_sg() */
+		       &ry, &rw, &rd);
+    return rw;
+}
+
+static int
+m_cwday(union DateData *x)
+{
+    int w;
+
+    w = m_wday(x);
+    if (w == 0)
+	w = 7;
+    return w;
+}
+
+static int
+m_wnumx(union DateData *x, int f)
+{
+    int ry, rw, rd;
+
+    c_jd_to_weeknum(m_local_jd(x), f, x_sg(x), /* !=m_sg() */
+		    &ry, &rw, &rd);
+    return rw;
+}
+
+static int
+m_wnum0(union DateData *x)
+{
+    return m_wnumx(x, 0);
+}
+
+static int
+m_wnum1(union DateData *x)
+{
+    return m_wnumx(x, 1);
+}
+
+inline static int
+m_hour(union DateData *x)
+{
+    if (simple_dat_p(x))
+	return 0;
+    else {
+	get_c_time(x);
+#ifndef USE_PACK
+	return x->c.hour;
+#else
+	return EX_HOUR(x->c.pc);
+#endif
+    }
+}
+
+inline static int
 m_min(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1442,12 +1803,12 @@ m_min(union DateData *x)
 #ifndef USE_PACK
 	return x->c.min;
 #else
-	return EX_MIN(x->c.pd);
+	return EX_MIN(x->c.pc);
 #endif
     }
 }
 
-static int
+inline static int
 m_sec(union DateData *x)
 {
     if (simple_dat_p(x))
@@ -1457,15 +1818,9 @@ m_sec(union DateData *x)
 #ifndef USE_PACK
 	return x->c.sec;
 #else
-	return EX_SEC(x->c.pd);
+	return EX_SEC(x->c.pc);
 #endif
     }
-}
-
-static int
-m_wday(union DateData *x)
-{
-    return c_jd_to_wday(m_local_jd(x));
 }
 
 #define decode_offset(of,s,h,m)\
@@ -1708,6 +2063,8 @@ valid_ordinal_p(VALUE y, int d, double sg,
 	int jd;
 
 	r = c_valid_ordinal_p(FIX2INT(y), d, sg, rd, &jd, ns);
+	if (!r)
+	    return 0;
 	decode_jd(INT2FIX(jd), nth, rjd);
 	if (f_zero_p(*nth))
 	    *ry = FIX2INT(y);
@@ -1745,6 +2102,8 @@ valid_civil_p(VALUE y, int m, int d, double sg,
 	int jd;
 
 	r = c_valid_civil_p(FIX2INT(y), m, d, sg, rm, rd, &jd, ns);
+	if (!r)
+	    return 0;
 	decode_jd(INT2FIX(jd), nth, rjd);
 	if (f_zero_p(*nth))
 	    *ry = FIX2INT(y);
@@ -1752,6 +2111,13 @@ valid_civil_p(VALUE y, int m, int d, double sg,
 	    VALUE nth2;
 	    decode_year(y, ns ? -1 : +1, &nth2, ry);
 	}
+    }
+    else if (style > 1) {
+	decode_year(y, style, nth, ry);
+	r = c_valid_julian_p(*ry, m, d, rm, rd);
+	if (!r)
+	    return 0;
+	c_civil_to_jd(*ry, *rm, *rd, style, rjd, ns);
     }
     else {
 	decode_year(y, style, nth, ry);
@@ -1773,6 +2139,8 @@ valid_commercial_p(VALUE y, int w, int d, double sg,
 	int jd;
 
 	r = c_valid_commercial_p(FIX2INT(y), w, d, sg, rw, rd, &jd, ns);
+	if (!r)
+	    return 0;
 	decode_jd(INT2FIX(jd), nth, rjd);
 	if (f_zero_p(*nth))
 	    *ry = FIX2INT(y);
@@ -1801,6 +2169,8 @@ valid_weeknum_p(VALUE y, int w, int d, int f, double sg,
 	int jd;
 
 	r = c_valid_weeknum_p(FIX2INT(y), w, d, f, sg, rw, rd, &jd, ns);
+	if (!r)
+	    return 0;
 	decode_jd(INT2FIX(jd), nth, rjd);
 	if (f_zero_p(*nth))
 	    *ry = FIX2INT(y);
@@ -1830,6 +2200,8 @@ valid_nth_kday_p(VALUE y, int m, int n, int k, double sg,
 	int jd;
 
 	r = c_valid_nth_kday_p(FIX2INT(y), m, n, k, sg, rm, rn, rk, &jd, ns);
+	if (!r)
+	    return 0;
 	decode_jd(INT2FIX(jd), nth, rjd);
 	if (f_zero_p(*nth))
 	    *ry = FIX2INT(y);
@@ -1845,8 +2217,6 @@ valid_nth_kday_p(VALUE y, int m, int n, int k, double sg,
     return r;
 }
 #endif
-
-/* date light */
 
 VALUE date_zone_to_diff(VALUE);
 
@@ -1876,6 +2246,11 @@ offset_to_sec(VALUE vof, int *rof)
 		rb_warning("fraction of offset is ignored");
 	    return 1;
 	}
+      default:
+	if (!k_numeric_p(vof))
+	    rb_raise(rb_eTypeError, "expected numeric");
+	vof = f_to_r(vof);
+	/* fall through */
       case T_RATIONAL:
 	{
 	    VALUE vs = day_to_sec(vof);
@@ -1915,9 +2290,20 @@ offset_to_sec(VALUE vof, int *rof)
     return 0;
 }
 
+/* date */
+
+#define valid_sg(sg) \
+{\
+    if (!c_valid_start_p(sg)) {\
+	sg = 0;\
+	rb_warning("invalid start is ignored");\
+    }\
+}
+
 static VALUE
 valid_jd_sub(int argc, VALUE *argv, VALUE klass, int need_jd)
 {
+    valid_sg(argv[1]);
     return argv[0];
 }
 
@@ -1932,9 +2318,9 @@ date_s__valid_jd_p(int argc, VALUE *argv, VALUE klass)
 
     argv2[0] = vjd;
     if (argc < 2)
-	argv[1] = DBL2NUM(GREGORIAN);
+	argv2[1] = DBL2NUM(GREGORIAN);
     else
-	argv[1] = vsg;
+	argv2[1] = vsg;
 
     return valid_jd_sub(2, argv2, klass, 1);
 }
@@ -1957,21 +2343,13 @@ date_s_valid_jd_p(int argc, VALUE *argv, VALUE klass)
 
     argv2[0] = vjd;
     if (argc < 2)
-	argv[1] = INT2FIX(DEFAULT_SG);
+	argv2[1] = INT2FIX(DEFAULT_SG);
     else
-	argv[1] = vsg;
+	argv2[1] = vsg;
 
     if (NIL_P(valid_jd_sub(2, argv2, klass, 0)))
 	return Qfalse;
     return Qtrue;
-}
-
-#define valid_sg(sg) \
-{\
-    if (!c_valid_start_p(sg)) {\
-	sg = 0;\
-	rb_warning("invalid start is ignored");\
-    }\
 }
 
 static VALUE
@@ -1988,7 +2366,7 @@ valid_civil_sub(int argc, VALUE *argv, VALUE klass, int need_jd)
 
     valid_sg(sg);
 
-    if (!need_jd && isinf(sg) && sg < 0) {
+    if (!need_jd && (style_p(y, sg) < 0)) {
 	if (!valid_gregorian_p(y, m, d,
 			       &nth, &ry,
 			       &rm, &rd))
@@ -2407,9 +2785,11 @@ date_s_zone_to_diff(VALUE klass, VALUE str)
 static VALUE
 date_s_julian_leap_p(VALUE klass, VALUE y)
 {
-    if (f_zero_p(f_mod(y, INT2FIX(4))))
-	return Qtrue;
-    return Qfalse;
+    VALUE nth;
+    int ry;
+
+    decode_year(y, +1, &nth, &ry);
+    return f_boolcast(c_julian_leap_p(ry));
 }
 
 /*
@@ -2422,17 +2802,23 @@ date_s_julian_leap_p(VALUE klass, VALUE y)
 static VALUE
 date_s_gregorian_leap_p(VALUE klass, VALUE y)
 {
-    if (f_zero_p(f_mod(y, INT2FIX(4))) &&
-	f_nonzero_p(f_mod(y, INT2FIX(100))) ||
-	f_zero_p(f_mod(y, INT2FIX(400))))
-	return Qtrue;
-    return Qfalse;
+    VALUE nth;
+    int ry;
+
+    decode_year(y, -1, &nth, &ry);
+    return f_boolcast(c_gregorian_leap_p(ry));
 }
 
 static void
-d_simple_gc_mark(struct SimpleDateData *dat)
+d_lite_gc_mark(union DateData *dat)
 {
-    rb_gc_mark(dat->nth);
+    if (simple_dat_p(dat))
+	rb_gc_mark(dat->s.nth);
+    else {
+	rb_gc_mark(dat->c.nth);
+	rb_gc_mark(dat->c.sf);
+
+    }
 }
 
 inline static VALUE
@@ -2446,30 +2832,12 @@ d_simple_new_internal(VALUE klass,
     VALUE obj;
 
     obj = Data_Make_Struct(klass, struct SimpleDateData,
-			   d_simple_gc_mark, -1, dat);
-
-    dat->nth = nth;
-    dat->jd = jd;
-    dat->sg = sg;
-    dat->year = y;
-#ifndef USE_PACK
-    dat->mon = m;
-    dat->mday = d;
-#else
-    dat->pd = PACK2(m, d);
-#endif
-    dat->flags = flags;
+			   d_lite_gc_mark, -1, dat);
+    set_to_simple(dat, nth, jd, sg, y, m, d, flags & ~COMPLEX_DAT);
 
     assert(have_jd_p(dat) || have_civil_p(dat));
 
     return obj;
-}
-
-static void
-d_complex_gc_mark(struct ComplexDateData *dat)
-{
-    rb_gc_mark(dat->nth);
-    rb_gc_mark(dat->sf);
 }
 
 inline static VALUE
@@ -2485,25 +2853,9 @@ d_complex_new_internal(VALUE klass,
     VALUE obj;
 
     obj = Data_Make_Struct(klass, struct ComplexDateData,
-			   d_complex_gc_mark, -1, dat);
-
-    dat->nth = nth;
-    dat->jd = jd;
-    dat->df = df;
-    dat->sf = sf;
-    dat->of = of;
-    dat->sg = sg;
-    dat->year = y;
-#ifndef USE_PACK
-    dat->mon = m;
-    dat->mday = d;
-    dat->hour = h;
-    dat->min = min;
-    dat->sec = s;
-#else
-    dat->pd = PACK5(m, d, h, min, s);
-#endif
-    dat->flags = flags | COMPLEX_DAT;
+			   d_lite_gc_mark, -1, dat);
+    set_to_complex(dat, nth, jd, df, sf, of, sg,
+		   y, m, d, h, min, s, flags | COMPLEX_DAT);
 
     assert(have_jd_p(dat) || have_civil_p(dat));
     assert(have_df_p(dat) || have_time_p(dat));
@@ -2511,62 +2863,38 @@ d_complex_new_internal(VALUE klass,
     return obj;
 }
 
-static void
-d_date_gc_mark(union DateData *dat)
+static VALUE
+d_lite_s_alloc_simple(VALUE klass)
 {
-    if (simple_dat_p(dat))
-	rb_gc_mark(dat->s.nth);
-    else {
-	rb_gc_mark(dat->c.nth);
-	rb_gc_mark(dat->c.sf);
-    }
+    return d_simple_new_internal(klass,
+				 INT2FIX(0), 0,
+				 DEFAULT_SG,
+				 0, 0, 0,
+				 HAVE_JD);
 }
 
-inline static VALUE
-d_date_new_internal(VALUE klass,
-		    VALUE nth, int jd,
-		    double sg,
-		    int y, int m, int d,
-		    unsigned flags)
+static VALUE
+d_lite_s_alloc_complex(VALUE klass)
 {
-    union DateData *dat;
-    VALUE obj;
-
-    obj = Data_Make_Struct(klass, union DateData,
-			   d_date_gc_mark, -1, dat);
-
-    dat->s.nth = nth;
-    dat->s.jd = jd;
-    dat->s.sg = sg;
-    dat->s.year = y;
-#ifndef USE_PACK
-    dat->s.mon = m;
-    dat->s.mday = d;
-#else
-    dat->s.pd = PACK2(m, d);
-#endif
-    dat->s.flags = flags;
-
-    assert(have_jd_p(dat) || have_civil_p(dat));
-
-    return obj;
+    return d_complex_new_internal(klass,
+				  INT2FIX(0), 0,
+				  0, INT2FIX(0),
+				  0, DEFAULT_SG,
+				  0, 0, 0,
+				  0, 0, 0,
+				  HAVE_JD | HAVE_DF);
 }
 
 static VALUE
 d_lite_s_alloc(VALUE klass)
 {
-    return d_date_new_internal(klass,
-			       INT2FIX(0), 0,
-			       DEFAULT_SG,
-			       0, 0, 0,
-			       HAVE_JD);
+    return d_lite_s_alloc_complex(klass);
 }
 
 static void
 old_to_new(VALUE ajd, VALUE of, VALUE sg,
 	   VALUE *rnth, int *rjd, int *rdf, VALUE *rsf,
-	   int *rof, double *rsg,
-	   unsigned *flags)
+	   int *rof, double *rsg)
 {
     VALUE jd, df, sf, of2, t;
 
@@ -2585,7 +2913,13 @@ old_to_new(VALUE ajd, VALUE of, VALUE sg,
     *rof = NUM2INT(of2);
     *rsg = NUM2DBL(sg);
 
-    if (*rof < -1 || *rof > 1) {
+    if (*rdf < 0 || *rdf >= DAY_IN_SECONDS)
+	rb_raise(rb_eArgError, "invalid day fraction");
+
+    if (f_lt_p(*rsf, INT2FIX(0)) ||
+	f_ge_p(*rsf, INT2FIX(SECOND_IN_NANOSECONDS)))
+
+    if (*rof < -DAY_IN_SECONDS || *rof > DAY_IN_SECONDS) {
 	*rof = 0;
 	rb_warning("invalid offset is ignored");
     }
@@ -2594,8 +2928,6 @@ old_to_new(VALUE ajd, VALUE of, VALUE sg,
 	*rsg = DEFAULT_SG;
 	rb_warning("invalid start is ignored");
     }
-
-    *flags = HAVE_JD | HAVE_DF | COMPLEX_DAT;
 }
 
 #ifndef NDEBUG
@@ -2605,7 +2937,6 @@ date_s_new_bang(int argc, VALUE *argv, VALUE klass)
     VALUE ajd, of, sg, nth, sf;
     int jd, df, rof;
     double rsg;
-    unsigned flags;
 
     rb_scan_args(argc, argv, "03", &ajd, &of, &sg);
 
@@ -2619,15 +2950,22 @@ date_s_new_bang(int argc, VALUE *argv, VALUE klass)
     }
 
     old_to_new(ajd, of, sg,
-	       &nth, &jd, &df, &sf, &rof, &rsg, &flags);
+	       &nth, &jd, &df, &sf, &rof, &rsg);
 
-    return d_complex_new_internal(klass,
-				  nth, jd,
-				  df, sf,
-				  rof, rsg,
-				  0, 0, 0,
-				  0, 0, 0,
-				  flags);
+    if (!df && f_zero_p(sf) && !rof)
+	return d_simple_new_internal(klass,
+				     nth, jd,
+				     rsg,
+				     0, 0, 0,
+				     HAVE_JD);
+    else
+	return d_complex_new_internal(klass,
+				      nth, jd,
+				      df, sf,
+				      rof, rsg,
+				      0, 0, 0,
+				      0, 0, 0,
+				      HAVE_JD | HAVE_DF);
 }
 #endif
 
@@ -2642,14 +2980,15 @@ integer_p(VALUE x)
       case T_FLOAT:
 	{
 	    double d = NUM2DBL(x);
-	    if (round(d) == d)
-		return 1;
+	    return round(d) == d;
 	}
+	break;
       case T_RATIONAL:
 	{
-	    if (RRATIONAL(x)->den == 1)
-		return 1;
+	    VALUE den = RRATIONAL(x)->den;
+	    return FIXNUM_P(den) && FIX2LONG(den) == 1;
 	}
+	break;
     }
     return 0;
 }
@@ -2790,7 +3129,6 @@ date_s_jd(int argc, VALUE *argv, VALUE klass)
 	int rjd;
 
 	decode_jd(jd, &nth, &rjd);
-
 	ret = d_simple_new_internal(klass,
 				    nth, rjd,
 				    sg,
@@ -2904,7 +3242,7 @@ date_s_civil(int argc, VALUE *argv, VALUE klass)
 	y = vy;
     }
 
-    if (isinf(sg) && sg < 0) {
+    if (style_p(y, sg) < 0) {
 	VALUE nth;
 	int ry, rm, rd;
 
@@ -3213,7 +3551,7 @@ static VALUE
 fv_values_at(VALUE h, VALUE a)
 {
     return rb_funcall2(h, rb_intern("values_at"),
-			RARRAY_LENINT(a), RARRAY_PTR(a));
+		       RARRAY_LENINT(a), RARRAY_PTR(a));
 }
 
 static VALUE d_lite_wday(VALUE);
@@ -3638,7 +3976,6 @@ d_new_by_frags(VALUE klass, VALUE hash, VALUE sg)
 	int rjd;
 
 	decode_jd(jd, &nth, &rjd);
-
 	return d_simple_new_internal(klass,
 				     nth, rjd,
 				     NUM2DBL(sg),
@@ -3647,9 +3984,8 @@ d_new_by_frags(VALUE klass, VALUE hash, VALUE sg)
     }
 }
 
-VALUE
-date__strptime(const char *str, size_t slen,
-	       const char *fmt, size_t flen, VALUE hash);
+VALUE date__strptime(const char *str, size_t slen,
+		     const char *fmt, size_t flen, VALUE hash);
 
 static VALUE
 date_s__strptime_internal(int argc, VALUE *argv, VALUE klass,
@@ -3759,8 +4095,7 @@ date_s_strptime(int argc, VALUE *argv, VALUE klass)
     }
 }
 
-VALUE
-date__parse(VALUE str, VALUE comp);
+VALUE date__parse(VALUE str, VALUE comp);
 
 static VALUE
 date_s__parse_internal(int argc, VALUE *argv, VALUE klass)
@@ -4090,6 +4425,142 @@ date_s_jisx0301(int argc, VALUE *argv, VALUE klass)
     }
 }
 
+static VALUE
+dup_obj(VALUE self)
+{
+    get_d1a(self);
+
+    if (simple_dat_p(adat)) {
+	VALUE new = d_lite_s_alloc_simple(CLASS_OF(self));
+	{
+	    get_d1b(new);
+	    bdat->s = adat->s;
+	    return new;
+	}
+    }
+    else {
+	VALUE new = d_lite_s_alloc_complex(CLASS_OF(self));
+	{
+	    get_d1b(new);
+	    bdat->c = adat->c;
+	    return new;
+	}
+    }
+}
+
+static VALUE
+dup_obj_as_complex(VALUE self)
+{
+    get_d1a(self);
+
+    if (simple_dat_p(adat)) {
+	VALUE new = d_lite_s_alloc_complex(CLASS_OF(self));
+	{
+	    get_d1b(new);
+	    copy_simple_to_complex(&bdat->c, &adat->s);
+	    bdat->c.flags |= HAVE_DF | COMPLEX_DAT;
+	    return new;
+	}
+    }
+    else {
+	VALUE new = d_lite_s_alloc_complex(CLASS_OF(self));
+	{
+	    get_d1b(new);
+	    bdat->c = adat->c;
+	    return new;
+	}
+    }
+}
+
+#define val2off(vof,iof) \
+{\
+    if (!offset_to_sec(vof, &iof)) {\
+	iof = 0;\
+	rb_warning("invalid offset is ignored");\
+    }\
+}
+
+#ifndef NDEBUG
+static VALUE
+d_lite_initialize(int argc, VALUE *argv, VALUE self)
+{
+    VALUE jd, vjd, vdf, sf, vsf, vof, vsg;
+    int df, of;
+    double sg;
+
+    rb_scan_args(argc, argv, "05", &vjd, &vdf, &vsf, &vof, &vsg);
+
+    jd = INT2FIX(0);
+    df = 0;
+    sf = INT2FIX(0);
+    of = 0;
+    sg = DEFAULT_SG;
+
+    switch (argc) {
+      case 5:
+	val2sg(vsg, sg);
+      case 4:
+	val2off(vof, of);
+      case 3:
+	sf = vsf;
+	if (f_lt_p(sf, INT2FIX(0)) ||
+	    f_ge_p(sf, INT2FIX(SECOND_IN_NANOSECONDS)))
+	    rb_raise(rb_eArgError, "invalid second fraction");
+      case 2:
+	df = NUM2INT(vdf);
+	if (df < 0 || df >= DAY_IN_SECONDS)
+	    rb_raise(rb_eArgError, "invalid day fraction");
+      case 1:
+	jd = vjd;
+    }
+
+    {
+	VALUE nth;
+	int rjd;
+
+	get_d1(self);
+
+	decode_jd(jd, &nth, &rjd);
+	if (!df && f_zero_p(sf) && !of) {
+	    set_to_simple(&dat->s, nth, rjd, sg, 0, 0, 0, HAVE_JD);
+	}
+	else {
+	    if (!complex_dat_p(dat))
+		rb_raise(rb_eArgError,
+			 "cannot load complex into simple");
+
+	    set_to_complex(&dat->c, nth, rjd, df, sf, of, sg,
+			   0, 0, 0, 0, 0, 0, HAVE_JD | HAVE_DF | COMPLEX_DAT);
+	}
+    }
+    return self;
+}
+#endif
+
+/* :nodoc: */
+static VALUE
+d_lite_initialize_copy(VALUE copy, VALUE date)
+{
+    if (copy == date)
+	return copy;
+    {
+	get_d2(copy, date);
+	if (simple_dat_p(bdat)) {
+	    adat->s = bdat->s;
+	    adat->s.flags &= ~COMPLEX_DAT;
+	}
+	else {
+	    if (!complex_dat_p(adat))
+		rb_raise(rb_eArgError,
+			 "cannot load complex into simple");
+
+	    adat->c = bdat->c;
+	    adat->c.flags |= COMPLEX_DAT;
+	}
+    }
+    return copy;
+}
+
 #ifndef NDEBUG
 static VALUE
 d_lite_fill(VALUE self)
@@ -4109,144 +4580,6 @@ d_lite_fill(VALUE self)
     return self;
 }
 #endif
-
-static VALUE
-copy_obj(VALUE self)
-{
-    get_d1(self);
-
-    if (simple_dat_p(dat))
-	return d_simple_new_internal(CLASS_OF(self),
-				     dat->s.nth,
-				     dat->s.jd,
-				     dat->s.sg,
-				     dat->s.year,
-#ifndef USE_PACK
-				     dat->s.mon,
-				     dat->s.mday,
-#else
-				     EX_MON(dat->s.pd),
-				     EX_MDAY(dat->s.pd),
-#endif
-				     dat->s.flags);
-    else
-	return d_complex_new_internal(CLASS_OF(self),
-				      dat->c.nth,
-				      dat->c.jd,
-				      dat->c.df,
-				      dat->c.sf,
-				      dat->c.of,
-				      dat->c.sg,
-				      dat->c.year,
-#ifndef USE_PACK
-				      dat->c.mon,
-				      dat->c.mday,
-				      dat->c.hour,
-				      dat->c.min,
-				      dat->c.sec,
-#else
-				      EX_MON(dat->c.pd),
-				      EX_MDAY(dat->c.pd),
-				      EX_HOUR(dat->c.pd),
-				      EX_MIN(dat->c.pd),
-				      EX_SEC(dat->c.pd),
-#endif
-				      dat->c.flags);
-}
-
-static VALUE
-copy_obj_as_complex(VALUE self)
-{
-    get_d1(self);
-
-    if (simple_dat_p(dat))
-	return d_complex_new_internal(CLASS_OF(self),
-				      dat->s.nth,
-				      dat->s.jd,
-				      0,
-				      INT2FIX(0),
-				      0,
-				      dat->s.sg,
-				      dat->s.year,
-#ifndef USE_PACK
-				      dat->s.mon,
-				      dat->s.mday,
-#else
-				      EX_MON(dat->s.pd),
-				      EX_MDAY(dat->s.pd),
-#endif
-				      0,
-				      0,
-				      0,
-				      dat->s.flags | HAVE_DF);
-    else
-	return d_complex_new_internal(CLASS_OF(self),
-				      dat->c.nth,
-				      dat->c.jd,
-				      dat->c.df,
-				      dat->c.sf,
-				      dat->c.of,
-				      dat->c.sg,
-				      dat->c.year,
-#ifndef USE_PACK
-				      dat->c.mon,
-				      dat->c.mday,
-				      dat->c.hour,
-				      dat->c.min,
-				      dat->c.sec,
-#else
-				      EX_MON(dat->c.pd),
-				      EX_MDAY(dat->c.pd),
-				      EX_HOUR(dat->c.pd),
-				      EX_MIN(dat->c.pd),
-				      EX_SEC(dat->c.pd),
-#endif
-				      dat->c.flags);
-}
-
-/* :nodoc: */
-static VALUE
-d_lite_initialize_copy(VALUE copy, VALUE date)
-{
-    if (copy == date)
-	return copy;
-    {
-	get_d2(copy, date);
-	if (simple_dat_p(bdat)) {
-	    adat->s.nth = bdat->s.nth;
-	    adat->s.jd = bdat->s.jd;
-	    adat->s.sg = bdat->s.sg;
-	    adat->s.year = bdat->s.year;
-#ifndef USE_PACK
-	    adat->s.mon = bdat->s.mon;
-	    adat->s.mday = bdat->s.mday;
-#else
-	    adat->s.pd = bdat->s.pd;
-#endif
-	    adat->s.flags = bdat->s.flags;
-	}
-	else {
-	    adat->c.nth = bdat->c.nth;
-	    adat->c.jd = bdat->c.jd;
-	    adat->c.df = bdat->c.df;
-	    adat->c.sf = bdat->c.sf;
-	    adat->c.of = bdat->c.of;
-	    adat->c.sg = bdat->c.sg;
-	    adat->c.year = bdat->c.year;
-#ifndef USE_PACK
-	    adat->c.mon = bdat->c.mon;
-	    adat->c.mday = bdat->c.mday;
-	    adat->c.hour = bdat->c.hour;
-	    adat->c.min = bdat->c.min;
-	    adat->c.sec = bdat->c.sec;
-#else
-	    adat->c.pd = bdat->c.pd;
-#endif
-	    adat->c.flags = bdat->c.flags | COMPLEX_DAT;
-	}
-    }
-    return copy;
-}
 
 /*
  * call-seq:
@@ -4270,37 +4603,8 @@ d_lite_ajd(VALUE self)
 static VALUE
 d_lite_amjd(VALUE self)
 {
-    VALUE r, sf;
-    int df;
-
     get_d1(self);
-
-    r = rb_rational_new1(f_sub(m_real_jd(dat), INT2FIX(2400001)));
-
-    if (simple_dat_p(dat))
-	return r;
-
-    df = m_df(dat);
-    if (df)
-	r = f_add(r, isec_to_day(df));
-
-    sf = m_sf(dat);
-    if (f_nonzero_p(sf))
-	r = f_add(r, ns_to_day(sf));
-    return r;
-}
-
-#define return_once(k, expr)\
-{\
-    VALUE id, val;\
-    get_d1(self);\
-    id = ID2SYM(rb_intern(#k));\
-    val = rb_hash_aref(dat->r.cache, id);\
-    if (!NIL_P(val))\
-	return val;\
-    val = expr;\
-    rb_hash_aset(dat->r.cache, id, val);\
-    return val;\
+    return m_amjd(dat);
 }
 
 /*
@@ -4415,109 +4719,6 @@ d_lite_day_fraction(VALUE self)
     return m_fr(dat);
 }
 
-static VALUE
-d_lite_wnum0(VALUE self)
-{
-    int ry, rw, rd;
-
-    get_d1(self);
-    c_jd_to_weeknum(m_local_jd(dat), 0, m_sg(dat),
-		    &ry, &rw, &rd);
-    return INT2FIX(rw);
-}
-
-static VALUE
-d_lite_wnum1(VALUE self)
-{
-    int ry, rw, rd;
-
-    get_d1(self);
-    c_jd_to_weeknum(m_local_jd(dat), 1, m_sg(dat),
-		    &ry, &rw, &rd);
-    return INT2FIX(rw);
-}
-
-/*
- * call-seq:
- *    d.hour
- *
- * Get the hour of this date.
- */
-static VALUE
-d_lite_hour(VALUE self)
-{
-    get_d1(self);
-    return INT2FIX(m_hour(dat));
-}
-
-/*
- * call-seq:
- *    d.min
- *    d.minute
- *
- * Get the minute of this date.
- */
-static VALUE
-d_lite_min(VALUE self)
-{
-    get_d1(self);
-    return INT2FIX(m_min(dat));
-}
-
-/*
- * call-seq:
- *    d.sec
- *    d.second
- *
- * Get the second of this date.
- */
-static VALUE
-d_lite_sec(VALUE self)
-{
-    get_d1(self);
-    return INT2FIX(m_sec(dat));
-}
-
-/*
- * call-seq:
- *    d.sec_fraction
- *    d.second_fraction
- *
- * Get the fraction-of-a-second of this date.
- */
-static VALUE
-d_lite_sec_fraction(VALUE self)
-{
-    get_d1(self);
-    return m_sf_in_sec(dat);
-}
-
-/*
- * call-seq:
- *    d.offset
- *
- * Get the offset of this date.
- */
-static VALUE
-d_lite_offset(VALUE self)
-{
-    get_d1(self);
-    return m_of_in_day(dat);
-}
-
-/*
- * call-seq:
- *    d.zone
- *
- * Get the zone name of this date.
- */
-static VALUE
-d_lite_zone(VALUE self)
-{
-    get_d1(self);
-    return m_zone(dat);
-}
-
 /*
  * call-seq:
  *    d.cwyear
@@ -4528,14 +4729,8 @@ d_lite_zone(VALUE self)
 static VALUE
 d_lite_cwyear(VALUE self)
 {
-    int ry, rw, rd;
-    VALUE ry2;
-
     get_d1(self);
-    c_jd_to_commercial(m_local_jd(dat), m_sg(dat),
-		       &ry, &rw, &rd);
-    encode_year(m_nth(dat), ry, +1, &ry2);
-    return ry2;
+    return m_real_cwyear(dat);
 }
 
 /*
@@ -4547,12 +4742,8 @@ d_lite_cwyear(VALUE self)
 static VALUE
 d_lite_cweek(VALUE self)
 {
-    int ry, rw, rd;
-
     get_d1(self);
-    c_jd_to_commercial(m_local_jd(dat), m_sg(dat),
-		       &ry, &rw, &rd);
-    return INT2FIX(rw);
+    return INT2FIX(m_cweek(dat));
 }
 
 /*
@@ -4565,13 +4756,22 @@ d_lite_cweek(VALUE self)
 static VALUE
 d_lite_cwday(VALUE self)
 {
-    int w;
-
     get_d1(self);
-    w = m_wday(dat);
-    if (w == 0)
-	w = 7;
-    return INT2FIX(w);
+    return INT2FIX(m_cwday(dat));
+}
+
+static VALUE
+d_lite_wnum0(VALUE self)
+{
+    get_d1(self);
+    return INT2FIX(m_wnum0(dat));
+}
+
+static VALUE
+d_lite_wnum1(VALUE self)
+{
+    get_d1(self);
+    return INT2FIX(m_wnum1(dat));
 }
 
 /*
@@ -4681,7 +4881,7 @@ d_lite_saturday_p(VALUE self)
 
 #ifndef NDEBUG
 static VALUE
-generic_nth_kday_p(VALUE self, VALUE n, VALUE k)
+d_lite_nth_kday_p(VALUE self, VALUE n, VALUE k)
 {
     int rjd, ns;
 
@@ -4691,13 +4891,94 @@ generic_nth_kday_p(VALUE self, VALUE n, VALUE k)
 	return Qfalse;
 
     c_nth_kday_to_jd(m_year(dat), m_mon(dat),
-		     NUM2INT(n), NUM2INT(k), m_sg(dat),
+		     NUM2INT(n), NUM2INT(k), x_sg(dat), /* !=m_sg() */
 		     &rjd, &ns);
     if (m_local_jd(dat) != rjd)
 	return Qfalse;
     return Qtrue;
 }
 #endif
+
+/*
+ * call-seq:
+ *    d.hour
+ *
+ * Get the hour of this date.
+ */
+static VALUE
+d_lite_hour(VALUE self)
+{
+    get_d1(self);
+    return INT2FIX(m_hour(dat));
+}
+
+/*
+ * call-seq:
+ *    d.min
+ *    d.minute
+ *
+ * Get the minute of this date.
+ */
+static VALUE
+d_lite_min(VALUE self)
+{
+    get_d1(self);
+    return INT2FIX(m_min(dat));
+}
+
+/*
+ * call-seq:
+ *    d.sec
+ *    d.second
+ *
+ * Get the second of this date.
+ */
+static VALUE
+d_lite_sec(VALUE self)
+{
+    get_d1(self);
+    return INT2FIX(m_sec(dat));
+}
+
+/*
+ * call-seq:
+ *    d.sec_fraction
+ *    d.second_fraction
+ *
+ * Get the fraction-of-a-second of this date.
+ */
+static VALUE
+d_lite_sec_fraction(VALUE self)
+{
+    get_d1(self);
+    return m_sf_in_sec(dat);
+}
+
+/*
+ * call-seq:
+ *    d.offset
+ *
+ * Get the offset of this date.
+ */
+static VALUE
+d_lite_offset(VALUE self)
+{
+    get_d1(self);
+    return m_of_in_day(dat);
+}
+
+/*
+ * call-seq:
+ *    d.zone
+ *
+ * Get the zone name of this date.
+ */
+static VALUE
+d_lite_zone(VALUE self)
+{
+    get_d1(self);
+    return m_zone(dat);
+}
 
 /*
  * call-seq:
@@ -4736,13 +5017,11 @@ d_lite_gregorian_p(VALUE self)
 static VALUE
 d_lite_leap_p(VALUE self)
 {
-    double sg;
     int rjd, ns, ry, rm, rd;
 
     get_d1(self);
-    sg = m_sg(dat);
-    if (isinf(sg) && sg < 0)
-	return f_boolcast(c_leap_p(m_year(dat)));
+    if (m_gregorian_p(dat))
+	return f_boolcast(c_gregorian_leap_p(m_year(dat)));
 
     c_civil_to_jd(m_year(dat), 3, 1, fix_style(dat),
 		  &rjd, &ns);
@@ -4772,7 +5051,7 @@ clear_civil(union DateData *x)
 	x->s.mon = 0;
 	x->s.mday = 0;
 #else
-	x->s.pd = 0;
+	x->s.pc = 0;
 #endif
 	x->s.flags &= ~HAVE_CIVIL;
     }
@@ -4785,7 +5064,7 @@ clear_civil(union DateData *x)
 	x->c.min = 0;
 	x->c.sec = 0;
 #else
-	x->c.pd = 0;
+	x->c.pc = 0;
 #endif
 	x->c.flags &= ~(HAVE_CIVIL | HAVE_TIME);
     }
@@ -4797,24 +5076,24 @@ set_sg(union DateData *x, double sg)
     if (simple_dat_p(x)) {
 	get_s_jd(x);
 	clear_civil(x);
-	x->s.sg = sg;
+	x->s.sg = (sg_cast)sg;
     } else {
 	get_c_jd(x);
 	get_c_df(x);
 	clear_civil(x);
-	x->c.sg = sg;
+	x->c.sg = (sg_cast)sg;
     }
 }
 
 static VALUE
-copy_obj_with_new_start(VALUE obj, double sg)
+dup_obj_with_new_start(VALUE obj, double sg)
 {
-    VALUE copy = copy_obj(obj);
+    volatile VALUE dup = dup_obj(obj);
     {
-	get_d1(copy);
+	get_d1(dup);
 	set_sg(dat, sg);
     }
-    return copy;
+    return dup;
 }
 
 /*
@@ -4835,7 +5114,7 @@ d_lite_new_start(int argc, VALUE *argv, VALUE self)
     if (argc >= 1)
 	val2sg(vsg, sg);
 
-    return copy_obj_with_new_start(self, sg);
+    return dup_obj_with_new_start(self, sg);
 }
 
 /*
@@ -4848,7 +5127,7 @@ d_lite_new_start(int argc, VALUE *argv, VALUE self)
 static VALUE
 d_lite_italy(VALUE self)
 {
-    return copy_obj_with_new_start(self, ITALY);
+    return dup_obj_with_new_start(self, ITALY);
 }
 
 /*
@@ -4861,7 +5140,7 @@ d_lite_italy(VALUE self)
 static VALUE
 d_lite_england(VALUE self)
 {
-    return copy_obj_with_new_start(self, ENGLAND);
+    return dup_obj_with_new_start(self, ENGLAND);
 }
 
 /*
@@ -4874,7 +5153,7 @@ d_lite_england(VALUE self)
 static VALUE
 d_lite_julian(VALUE self)
 {
-    return copy_obj_with_new_start(self, JULIAN);
+    return dup_obj_with_new_start(self, JULIAN);
 }
 
 /*
@@ -4887,7 +5166,7 @@ d_lite_julian(VALUE self)
 static VALUE
 d_lite_gregorian(VALUE self)
 {
-    return copy_obj_with_new_start(self, GREGORIAN);
+    return dup_obj_with_new_start(self, GREGORIAN);
 }
 
 static void
@@ -4901,22 +5180,14 @@ set_of(union DateData *x, int of)
 }
 
 static VALUE
-copy_obj_with_new_offset(VALUE obj, int of)
+dup_obj_with_new_offset(VALUE obj, int of)
 {
-    VALUE copy = copy_obj_as_complex(obj);
+    volatile VALUE dup = dup_obj_as_complex(obj);
     {
-	get_d1(copy);
+	get_d1(dup);
 	set_of(dat, of);
     }
-    return copy;
-}
-
-#define val2off(vof,iof) \
-{\
-    if (!offset_to_sec(vof, &iof)) {\
-	iof = 0;\
-	rb_warning("invalid offset is ignored");\
-    }\
+    return dup;
 }
 
 /*
@@ -4937,7 +5208,7 @@ d_lite_new_offset(int argc, VALUE *argv, VALUE self)
     if (argc >= 1)
 	val2off(vof, rof);
 
-    return copy_obj_with_new_offset(self, rof);
+    return dup_obj_with_new_offset(self, rof);
 }
 
 /*
@@ -4972,15 +5243,20 @@ d_lite_plus(VALUE self, VALUE other)
 		nth = f_add(nth, INT2FIX(DIV(t, CM_PERIOD)));
 		t = MOD(t, CM_PERIOD);
 	    }
-	    jd = m_jd(dat) + (int)t;
 
-	    if (jd < 0) {
-		nth = f_sub(nth, INT2FIX(1));
-		jd += CM_PERIOD;
-	    }
-	    else if (jd >= CM_PERIOD) {
-		nth = f_add(nth, INT2FIX(1));
-		jd -= CM_PERIOD;
+	    if (!t)
+		jd = m_jd(dat);
+	    else {
+		jd = m_jd(dat) + (int)t;
+
+		if (jd < 0) {
+		    nth = f_sub(nth, INT2FIX(1));
+		    jd += CM_PERIOD;
+		}
+		else if (jd >= CM_PERIOD) {
+		    nth = f_add(nth, INT2FIX(1));
+		    jd -= CM_PERIOD;
+		}
 	    }
 
 	    if (simple_dat_p(dat))
@@ -5023,16 +5299,24 @@ d_lite_plus(VALUE self, VALUE other)
 		jd = -jd;
 	    }
 
-	    jd = m_jd(dat) + jd;
-	    if (jd < 0) {
-		nth = f_sub(nth, INT2FIX(1));
-		jd += CM_PERIOD;
+	    if (!jd)
+		jd = m_jd(dat);
+	    else {
+		jd = m_jd(dat) + jd;
+		if (jd < 0) {
+		    nth = f_sub(nth, INT2FIX(1));
+		    jd += CM_PERIOD;
+		}
+		else if (jd >= CM_PERIOD) {
+		    nth = f_add(nth, INT2FIX(1));
+		    jd -= CM_PERIOD;
+		}
 	    }
-	    else if (jd >= CM_PERIOD) {
-		nth = f_add(nth, INT2FIX(1));
-		jd -= CM_PERIOD;
-	    }
-	    nth = f_add(m_nth(dat), nth);
+
+	    if (f_zero_p(nth))
+		nth = m_nth(dat);
+	    else
+		nth = f_add(m_nth(dat), nth);
 
 	    if (simple_dat_p(dat))
 		return d_simple_new_internal(CLASS_OF(self),
@@ -5095,40 +5379,56 @@ d_lite_plus(VALUE self, VALUE other)
 		sf = f_negate(sf);
 	    }
 
-	    sf = f_add(m_sf(dat), sf);
-	    if (f_lt_p(sf, INT2FIX(0))) {
-		df -= 1;
-		sf = f_add(sf, INT2FIX(SECOND_IN_NANOSECONDS));
-	    }
-	    else if (f_ge_p(sf, INT2FIX(SECOND_IN_NANOSECONDS))) {
-		df += 1;
-		sf = f_sub(sf, INT2FIX(SECOND_IN_NANOSECONDS));
-	    }
-
-	    df = m_df(dat) + df;
-	    if (df < 0) {
-		jd -= 1;
-		df += DAY_IN_SECONDS;
-	    }
-	    else if (df >= DAY_IN_SECONDS) {
-		jd += 1;
-		df -= DAY_IN_SECONDS;
+	    if (f_zero_p(sf))
+		sf = m_sf(dat);
+	    else {
+		sf = f_add(m_sf(dat), sf);
+		if (f_lt_p(sf, INT2FIX(0))) {
+		    df -= 1;
+		    sf = f_add(sf, INT2FIX(SECOND_IN_NANOSECONDS));
+		}
+		else if (f_ge_p(sf, INT2FIX(SECOND_IN_NANOSECONDS))) {
+		    df += 1;
+		    sf = f_sub(sf, INT2FIX(SECOND_IN_NANOSECONDS));
+		}
 	    }
 
-	    jd = m_jd(dat) + jd;
-	    if (jd < 0) {
-		nth = f_sub(nth, INT2FIX(1));
-		jd += CM_PERIOD;
+	    if (!df)
+		df = m_df(dat);
+	    else {
+		df = m_df(dat) + df;
+		if (df < 0) {
+		    jd -= 1;
+		    df += DAY_IN_SECONDS;
+		}
+		else if (df >= DAY_IN_SECONDS) {
+		    jd += 1;
+		    df -= DAY_IN_SECONDS;
+		}
 	    }
-	    else if (jd >= CM_PERIOD) {
-		nth = f_add(nth, INT2FIX(1));
-		jd -= CM_PERIOD;
+
+	    if (!jd)
+		jd = m_jd(dat);
+	    else {
+		jd = m_jd(dat) + jd;
+		if (jd < 0) {
+		    nth = f_sub(nth, INT2FIX(1));
+		    jd += CM_PERIOD;
+		}
+		else if (jd >= CM_PERIOD) {
+		    nth = f_add(nth, INT2FIX(1));
+		    jd -= CM_PERIOD;
+		}
 	    }
-	    nth = f_add(m_nth(dat), nth);
+
+	    if (f_zero_p(nth))
+		nth = m_nth(dat);
+	    else
+		nth = f_add(m_nth(dat), nth);
 
 	    if (!df && f_zero_p(sf) && !m_of(dat))
 		return d_simple_new_internal(CLASS_OF(self),
-					     nth, jd,
+					     nth, (int)jd,
 					     m_sg(dat),
 					     0, 0, 0,
 					     (dat->s.flags | HAVE_JD) &
@@ -5136,7 +5436,7 @@ d_lite_plus(VALUE self, VALUE other)
 					       COMPLEX_DAT));
 	    else
 		return d_complex_new_internal(CLASS_OF(self),
-					      nth, jd,
+					      nth, (int)jd,
 					      df, sf,
 					      m_of(dat), m_sg(dat),
 					      0, 0, 0,
@@ -5150,10 +5450,14 @@ d_lite_plus(VALUE self, VALUE other)
 	if (!k_numeric_p(other))
 	    rb_raise(rb_eTypeError, "expected numeric");
 	other = f_to_r(other);
+	/* fall through */
       case T_RATIONAL:
 	{
 	    VALUE nth, sf, t;
 	    int jd, df, s;
+
+	    if (integer_p(other))
+		return d_lite_plus(self, RRATIONAL(other)->num);
 
 	    if (f_positive_p(other))
 		s = +1;
@@ -5181,36 +5485,52 @@ d_lite_plus(VALUE self, VALUE other)
 		sf = f_negate(sf);
 	    }
 
-	    sf = f_add(m_sf(dat), sf);
-	    if (f_lt_p(sf, INT2FIX(0))) {
-		df -= 1;
-		sf = f_add(sf, INT2FIX(SECOND_IN_NANOSECONDS));
-	    }
-	    else if (f_ge_p(sf, INT2FIX(SECOND_IN_NANOSECONDS))) {
-		df += 1;
-		sf = f_sub(sf, INT2FIX(SECOND_IN_NANOSECONDS));
-	    }
-
-	    df = m_df(dat) + df;
-	    if (df < 0) {
-		jd -= 1;
-		df += DAY_IN_SECONDS;
-	    }
-	    else if (df >= DAY_IN_SECONDS) {
-		jd += 1;
-		df -= DAY_IN_SECONDS;
+	    if (f_zero_p(sf))
+		sf = m_sf(dat);
+	    else {
+		sf = f_add(m_sf(dat), sf);
+		if (f_lt_p(sf, INT2FIX(0))) {
+		    df -= 1;
+		    sf = f_add(sf, INT2FIX(SECOND_IN_NANOSECONDS));
+		}
+		else if (f_ge_p(sf, INT2FIX(SECOND_IN_NANOSECONDS))) {
+		    df += 1;
+		    sf = f_sub(sf, INT2FIX(SECOND_IN_NANOSECONDS));
+		}
 	    }
 
-	    jd = m_jd(dat) + jd;
-	    if (jd < 0) {
-		nth = f_sub(nth, INT2FIX(1));
-		jd += CM_PERIOD;
+	    if (!df)
+		df = m_df(dat); 
+	    else {
+		df = m_df(dat) + df;
+		if (df < 0) {
+		    jd -= 1;
+		    df += DAY_IN_SECONDS;
+		}
+		else if (df >= DAY_IN_SECONDS) {
+		    jd += 1;
+		    df -= DAY_IN_SECONDS;
+		}
 	    }
-	    else if (jd >= CM_PERIOD) {
-		nth = f_add(nth, INT2FIX(1));
-		jd -= CM_PERIOD;
+
+	    if (!jd)
+		jd = m_jd(dat);
+	    else {
+		jd = m_jd(dat) + jd;
+		if (jd < 0) {
+		    nth = f_sub(nth, INT2FIX(1));
+		    jd += CM_PERIOD;
+		}
+		else if (jd >= CM_PERIOD) {
+		    nth = f_add(nth, INT2FIX(1));
+		    jd -= CM_PERIOD;
+		}
 	    }
-	    nth = f_add(m_nth(dat), nth);
+
+	    if (f_zero_p(nth))
+		nth = m_nth(dat);
+	    else
+		nth = f_add(m_nth(dat), nth);
 
 	    if (!df && f_zero_p(sf) && !m_of(dat))
 		return d_simple_new_internal(CLASS_OF(self),
@@ -5498,6 +5818,8 @@ d_lite_prev_year(int argc, VALUE *argv, VALUE self)
     return d_lite_lshift(self, f_mul(n, INT2FIX(12)));
 }
 
+static VALUE d_lite_cmp(VALUE, VALUE);
+
 /*
  * call-seq:
  *    d.step(limit[, step=1])
@@ -5509,7 +5831,7 @@ d_lite_prev_year(int argc, VALUE *argv, VALUE self)
  * date at each step.
  */
 static VALUE
-generic_step(int argc, VALUE *argv, VALUE self)
+d_lite_step(int argc, VALUE *argv, VALUE self)
 {
     VALUE limit, step, date;
 
@@ -5528,9 +5850,9 @@ generic_step(int argc, VALUE *argv, VALUE self)
     date = self;
     switch (FIX2INT(f_cmp(step, INT2FIX(0)))) {
       case -1:
-	while (f_ge_p(date, limit)) {
+	while (FIX2INT(d_lite_cmp(date, limit)) >= 0) {
 	    rb_yield(date);
-	    date = f_add(date, step);
+	    date = d_lite_plus(date, step);
 	}
 	break;
       case 0:
@@ -5538,9 +5860,9 @@ generic_step(int argc, VALUE *argv, VALUE self)
 	    rb_yield(date);
 	break;
       case 1:
-	while (f_le_p(date, limit)) {
+	while (FIX2INT(d_lite_cmp(date, limit)) <= 0) {
 	    rb_yield(date);
-	    date = f_add(date, step);
+	    date = d_lite_plus(date, step);
 	}
 	break;
       default:
@@ -5558,16 +5880,16 @@ generic_step(int argc, VALUE *argv, VALUE self)
  * (inclusive), yielding each date as we go.
  */
 static VALUE
-generic_upto(VALUE self, VALUE max)
+d_lite_upto(VALUE self, VALUE max)
 {
     VALUE date;
 
     RETURN_ENUMERATOR(self, 1, &max);
 
     date = self;
-    while (f_le_p(date, max)) {
+    while (FIX2INT(d_lite_cmp(date, max)) <= 0) {
 	rb_yield(date);
-	date = f_add(date, INT2FIX(1));
+	date = d_lite_plus(date, INT2FIX(1));
     }
     return self;
 }
@@ -5581,16 +5903,16 @@ generic_upto(VALUE self, VALUE max)
  * (inclusive), yielding each date as we go.
  */
 static VALUE
-generic_downto(VALUE self, VALUE min)
+d_lite_downto(VALUE self, VALUE min)
 {
     VALUE date;
 
     RETURN_ENUMERATOR(self, 1, &min);
 
     date = self;
-    while (f_ge_p(date, min)) {
+    while (FIX2INT(d_lite_cmp(date, min)) >= 0) {
 	rb_yield(date);
-	date = f_add(date, INT2FIX(-1));
+	date = d_lite_plus(date, INT2FIX(-1));
     }
     return self;
 }
@@ -5759,8 +6081,8 @@ d_lite_cmp(VALUE self, VALUE other)
 			return INT2FIX(1);
 		    }
 #else
-		    a_pd = m_pd(adat);
-		    b_pd = m_pd(bdat);
+		    a_pd = m_pc(adat);
+		    b_pd = m_pc(bdat);
 		    if (a_pd == b_pd) {
 			return INT2FIX(0);
 		    }
@@ -5867,8 +6189,8 @@ d_lite_equal(VALUE self, VALUE other)
 		    }
 #else
 		    /* mon and mday only */
-		    a_pd = (m_pd(adat) >> MDAY_SHIFT);
-		    b_pd = (m_pd(bdat) >> MDAY_SHIFT);
+		    a_pd = (m_pc(adat) >> MDAY_SHIFT);
+		    b_pd = (m_pc(bdat) >> MDAY_SHIFT);
 		    if (a_pd == b_pd) {
 			return Qtrue;
 		    }
@@ -5905,9 +6227,21 @@ d_lite_eql_p(VALUE self, VALUE other)
 static VALUE
 d_lite_hash(VALUE self)
 {
+    st_index_t v, h[4];
+
     get_d1(self);
-    return rb_hash(m_ajd(dat));
+    h[0] = m_nth(dat);
+    h[1] = m_jd(dat);
+    h[2] = m_df(dat);
+    h[3] = m_sf(dat);
+    v = rb_memhash(h, sizeof(h));
+    return LONG2FIX(v);
 }
+
+#include "date_tmx.h"
+static void set_tmx(VALUE, struct tmx *);
+static VALUE strftimev(const char *, VALUE,
+		       void (*)(VALUE, struct tmx *));
 
 /*
  * call-seq:
@@ -5918,35 +6252,82 @@ d_lite_hash(VALUE self)
 static VALUE
 d_lite_to_s(VALUE self)
 {
-    get_d1(self);
+    return strftimev("%Y-%m-%d", self, set_tmx);
+}
 
-    if (f_zero_p(m_nth(dat)))
+#ifndef NDEBUG
+static VALUE
+mk_inspect_flags(union DateData *x)
+{
+    return rb_enc_sprintf(rb_usascii_encoding(),
+			  "%c%c%c%c%c",
+			  (x->flags & COMPLEX_DAT) ? 'C' : 'S',
+			  (x->flags & HAVE_JD)     ? 'j' : '-',
+			  (x->flags & HAVE_DF)     ? 'd' : '-',
+			  (x->flags & HAVE_CIVIL)  ? 'c' : '-',
+			  (x->flags & HAVE_TIME)   ? 't' : '-');
+}
+
+static VALUE
+mk_inspect_raw(union DateData *x, const char *klass)
+{
+    if (simple_dat_p(x)) {
 	return rb_enc_sprintf(rb_usascii_encoding(),
-			      "%.4d-%02d-%02d",
-			      m_year(dat), m_mon(dat), m_mday(dat));
+			      "#<%s: "
+			      "(%sth,%dj),+0s,%.0fj; "
+			      "%dy%dm%dd; %s>",
+			      klass ? klass : "?",
+			      RSTRING_PTR(f_inspect(x->s.nth)),
+			      x->s.jd, x->s.sg,
+#ifndef USE_PACK
+			      x->s.year, x->s.mon, x->s.mday,
+#else
+			      x->s.year,
+			      EX_MON(x->s.pc), EX_MDAY(x->s.pc),
+#endif
+			      RSTRING_PTR(mk_inspect_flags(x)));
+    }
     else {
-	VALUE argv[4];
-
-	argv[0] = rb_usascii_str_new2("%.4d-%02d-%02d");
-	argv[1] = m_real_year(dat);
-	argv[2] = INT2FIX(m_mon(dat));
-	argv[3] = INT2FIX(m_mday(dat));
-	return rb_f_sprintf(4, argv);
+	return rb_enc_sprintf(rb_usascii_encoding(),
+			      "#<%s: "
+			      "(%sth,%dj,%ds,%sn),%+ds,%.0fj; "
+			      "%dy%dm%dd %dh%dm%ds; %s>",
+			      klass ? klass : "?",
+			      RSTRING_PTR(f_inspect(x->c.nth)),
+			      x->c.jd, x->c.df,
+			      RSTRING_PTR(f_inspect(x->c.sf)),
+			      x->c.of, x->c.sg,
+#ifndef USE_PACK
+			      x->c.year, x->c.mon, x->c.mday,
+			      x->c.hour, x->c.min, x->c.sec,
+#else
+			      x->c.year,
+			      EX_MON(x->c.pc), EX_MDAY(x->c.pc),
+			      EX_HOUR(x->c.pc), EX_MIN(x->c.pc),
+			      EX_SEC(x->c.pc),
+#endif
+			      RSTRING_PTR(mk_inspect_flags(x)));
     }
 }
 
 static VALUE
-inspect_flags(VALUE self)
+d_lite_inspect_raw(VALUE self)
 {
     get_d1(self);
+    return mk_inspect_raw(dat, rb_obj_classname(self));
+}
+#endif
 
+static VALUE
+mk_inspect(union DateData *x, const char *klass, const char *to_s)
+{
     return rb_enc_sprintf(rb_usascii_encoding(),
-			  "%c%c%c%c%c",
-			  (dat->flags & COMPLEX_DAT) ? 'C' : 'S',
-			  (dat->flags & HAVE_JD)     ? 'j' : '-',
-			  (dat->flags & HAVE_DF)     ? 'd' : '-',
-			  (dat->flags & HAVE_CIVIL)  ? 'c' : '-',
-			  (dat->flags & HAVE_TIME)   ? 't' : '-');
+			  "#<%s: %s ((%sj,%ds,%sn),%+ds,%.0fj)>",
+			  klass ? klass : "?",
+			  to_s ? to_s : "?",
+			  RSTRING_PTR(f_inspect(m_real_jd(x))), m_df(x),
+			  RSTRING_PTR(f_inspect(m_sf(x))),
+			  m_of(x), m_sg(x));
 }
 
 /*
@@ -5959,54 +6340,15 @@ static VALUE
 d_lite_inspect(VALUE self)
 {
     get_d1(self);
-
-    if (simple_dat_p(dat)) {
-	return rb_enc_sprintf(rb_usascii_encoding(),
-			      "#<%s: %s "
-			      "((%sth,%dj),+0s,%.0fj; "
-			      "%dy%dm%dd; %s)>",
-			      rb_obj_classname(self),
-			      RSTRING_PTR(f_to_s(self)),
-			      RSTRING_PTR(f_inspect(dat->s.nth)),
-			      dat->s.jd, dat->s.sg,
-#ifndef USE_PACK
-			      dat->s.year, dat->s.mon, dat->s.mday,
-#else
-			      dat->s.year,
-			      EX_MON(dat->s.pd), EX_MDAY(dat->s.pd),
-#endif
-			      RSTRING_PTR(inspect_flags(self)));
-    }
-    else {
-	return rb_enc_sprintf(rb_usascii_encoding(),
-			      "#<%s: %s "
-			      "((%sth,%dj,%ds,%sn),%+ds,%.0fj; "
-			      "%dy%dm%dd %dh%dm%ds; %s)>",
-			      rb_obj_classname(self),
-			      RSTRING_PTR(f_to_s(self)),
-			      RSTRING_PTR(f_inspect(dat->c.nth)),
-			      dat->c.jd, dat->c.df,
-			      RSTRING_PTR(f_inspect(dat->c.sf)),
-			      dat->c.of, dat->c.sg,
-#ifndef USE_PACK
-			      dat->c.year, dat->c.mon, dat->c.mday,
-			      dat->c.hour, dat->c.min, dat->c.sec,
-#else
-			      dat->c.year,
-			      EX_MON(dat->c.pd), EX_MDAY(dat->c.pd),
-			      EX_HOUR(dat->c.pd), EX_MIN(dat->c.pd),
-			      EX_SEC(dat->c.pd),
-#endif
-			      RSTRING_PTR(inspect_flags(self)));
-    }
+    return mk_inspect(dat, rb_obj_classname(self),
+		      RSTRING_PTR(f_to_s(self)));
 }
 
 #include <errno.h>
 #include "date_tmx.h"
 
-size_t
-date_strftime(char *s, size_t maxsize, const char *format,
-	      const struct tmx *tmx);
+size_t date_strftime(char *s, size_t maxsize, const char *format,
+		     const struct tmx *tmx);
 
 #define SMALLBUF 100
 static size_t
@@ -6040,35 +6382,54 @@ date_strftime_alloc(char **buf, const char *format,
     return len;
 }
 
+static VALUE
+tmx_m_of(union DateData *x)
+{
+    return INT2FIX(m_of(x));
+}
+
+static char *
+tmx_m_zone(union DateData *x)
+{
+    return RSTRING_PTR(m_zone(x));
+}
+
+static VALUE
+tmx_m_timev(union DateData *x)
+{
+    if (simple_dat_p(x))
+	return day_to_sec(f_sub(m_real_jd(x),
+				UNIX_EPOCH_IN_CJD));
+    else
+	return day_to_sec(f_sub(m_ajd(x),
+				UNIX_EPOCH_IN_AJD));
+}
+
+static struct tmx_funcs tmx_funcs = {
+    (VALUE (*)(void *))m_real_year,
+    (int (*)(void *))m_yday,
+    (int (*)(void *))m_mon,
+    (int (*)(void *))m_mday,
+    (VALUE (*)(void *))m_real_cwyear,
+    (int (*)(void *))m_cweek,
+    (int (*)(void *))m_cwday,
+    (int (*)(void *))m_wnum0,
+    (int (*)(void *))m_wnum1,
+    (int (*)(void *))m_wday,
+    (int (*)(void *))m_hour,
+    (int (*)(void *))m_min,
+    (int (*)(void *))m_sec,
+    (VALUE (*)(void *))tmx_m_of,
+    (char *(*)(void *))tmx_m_zone,
+    (VALUE (*)(void *))tmx_m_timev
+};
+
 static void
-d_lite_set_tmx(VALUE self, struct tmx *tmx)
+set_tmx(VALUE self, struct tmx *tmx)
 {
     get_d1(self);
-
-    tmx->year = m_real_year(dat);
-    tmx->yday = m_yday(dat);
-    tmx->mon = m_mon(dat);
-    tmx->mday = m_mday(dat);
-    tmx->wday = m_wday(dat);
-
-    if (simple_dat_p(dat)) {
-	tmx->hour = 0;
-	tmx->min = 0;
-	tmx->sec = 0;
-	tmx->offset = INT2FIX(0);
-	tmx->zone = "+00:00";
-	tmx->timev = day_to_sec(f_sub(m_real_jd(dat),
-				      UNIX_EPOCH_IN_CJD));
-    }
-    else {
-	tmx->hour = m_hour(dat);
-	tmx->min = m_min(dat);
-	tmx->sec = m_sec(dat);
-	tmx->offset = INT2FIX(m_of(dat));
-	tmx->zone = RSTRING_PTR(m_zone(dat));
-	tmx->timev = day_to_sec(f_sub(m_ajd(dat),
-				      UNIX_EPOCH_IN_AJD));
-    }
+    tmx->dat = (void *)dat;
+    tmx->funcs = &tmx_funcs;
 }
 
 static VALUE
@@ -6137,7 +6498,7 @@ static VALUE
 d_lite_strftime(int argc, VALUE *argv, VALUE self)
 {
     return date_strftime_internal(argc, argv, self,
-				  "%F", d_lite_set_tmx);
+				  "%F", set_tmx);
 }
 
 static VALUE
@@ -6167,7 +6528,7 @@ strftimev(const char *fmt, VALUE self,
 static VALUE
 d_lite_asctime(VALUE self)
 {
-    return strftimev("%c", self, d_lite_set_tmx);
+    return strftimev("%c", self, set_tmx);
 }
 
 /*
@@ -6180,7 +6541,7 @@ d_lite_asctime(VALUE self)
 static VALUE
 d_lite_iso8601(VALUE self)
 {
-    return strftimev("%F", self, d_lite_set_tmx);
+    return strftimev("%F", self, set_tmx);
 }
 
 /*
@@ -6192,7 +6553,7 @@ d_lite_iso8601(VALUE self)
 static VALUE
 d_lite_rfc3339(VALUE self)
 {
-    return strftimev("%FT%T%:z", self, d_lite_set_tmx);
+    return strftimev("%FT%T%:z", self, set_tmx);
 }
 
 /*
@@ -6205,7 +6566,7 @@ d_lite_rfc3339(VALUE self)
 static VALUE
 d_lite_rfc2822(VALUE self)
 {
-    return strftimev("%a, %-d %b %Y %T %z", self, d_lite_set_tmx);
+    return strftimev("%a, %-d %b %Y %T %z", self, set_tmx);
 }
 
 /*
@@ -6218,8 +6579,8 @@ d_lite_rfc2822(VALUE self)
 static VALUE
 d_lite_httpdate(VALUE self)
 {
-    VALUE d = copy_obj_with_new_offset(self, 0);
-    return strftimev("%a, %d %b %Y %T GMT", d, d_lite_set_tmx);
+    volatile VALUE dup = dup_obj_with_new_offset(self, 0);
+    return strftimev("%a, %d %b %Y %T GMT", dup, set_tmx);
 }
 
 static VALUE
@@ -6262,10 +6623,32 @@ d_lite_jisx0301(VALUE self)
     if (!gengo(m_real_local_jd(dat),
 	       m_real_year(dat),
 	       argv))
-	return strftimev("%F", self, d_lite_set_tmx);
+	return strftimev("%F", self, set_tmx);
     return f_add(rb_f_sprintf(2, argv),
-		 strftimev(".%m.%d", self, d_lite_set_tmx));
+		 strftimev(".%m.%d", self, set_tmx));
 }
+
+#ifndef NDEBUG
+static VALUE
+d_lite_marshal_dump_old(VALUE self)
+{
+    VALUE a;
+
+    get_d1(self);
+
+    a = rb_ary_new3(3,
+		    m_ajd(dat),
+		    m_of_in_day(dat),
+		    DBL2NUM(m_sg(dat)));
+
+    if (FL_TEST(self, FL_EXIVAR)) {
+	rb_copy_generic_ivar(a, self);
+	FL_SET(a, FL_EXIVAR);
+    }
+
+    return a;
+}
+#endif
 
 /*
  * call-seq:
@@ -6316,32 +6699,25 @@ d_lite_marshal_load(VALUE self, VALUE a)
 	    VALUE ajd, of, sg, nth, sf;
 	    int jd, df, rof;
 	    double rsg;
-	    unsigned flags;
 
 	    ajd = RARRAY_PTR(a)[0];
 	    of = RARRAY_PTR(a)[1];
 	    sg = RARRAY_PTR(a)[2];
 
 	    old_to_new(ajd, of, sg,
-		       &nth, &jd, &df, &sf, &rof, &rsg, &flags);
+		       &nth, &jd, &df, &sf, &rof, &rsg);
 
-	    dat->c.nth = nth;
-	    dat->c.jd = jd;
-	    dat->c.df = df;
-	    dat->c.sf = sf;
-	    dat->c.of = rof;
-	    dat->c.sg = rsg;
-	    dat->c.year = 0;
-#ifndef USE_PACK
-	    dat->c.mon = 0;
-	    dat->c.mday = 0;
-	    dat->c.hour = 0;
-	    dat->c.min = 0;
-	    dat->c.sec = 0;
-#else
-	    dat->c.pd = 0;
-#endif
-	    dat->c.flags = flags;
+	    if (!df && f_zero_p(sf) && !rof) {
+		set_to_simple(&dat->s, nth, jd, sg, 0, 0, 0, HAVE_JD);
+	    } else {
+		if (!complex_dat_p(dat))
+		    rb_raise(rb_eArgError,
+			     "cannot load complex into simple");
+
+		set_to_complex(&dat->c, nth, jd, df, sf, rof, rsg,
+			       0, 0, 0, 0, 0, 0,
+			       HAVE_JD | HAVE_DF | COMPLEX_DAT);
+	    }
 	}
 	break;
       case 6:
@@ -6356,38 +6732,16 @@ d_lite_marshal_load(VALUE self, VALUE a)
 	    sf = RARRAY_PTR(a)[3];
 	    of = NUM2INT(RARRAY_PTR(a)[4]);
 	    sg = NUM2DBL(RARRAY_PTR(a)[5]);
-
 	    if (!df && f_zero_p(sf) && !of) {
-		dat->s.nth = nth;
-		dat->s.jd = jd;
-		dat->s.sg = sg;
-		dat->s.year = 0;
-#ifndef USE_PACK
-		dat->s.mon = 0;
-		dat->s.mday = 0;
-#else
-		dat->s.pd = 0;
-#endif
-		dat->s.flags = HAVE_JD;
-	    }
-	    else {
-		dat->c.nth = nth;
-		dat->c.jd = jd;
-		dat->c.df = df;
-		dat->c.sf = sf;
-		dat->c.of = of;
-		dat->c.sg = sg;
-		dat->c.year = 0;
-#ifndef USE_PACK
-		dat->c.mon = 0;
-		dat->c.mday = 0;
-		dat->c.hour = 0;
-		dat->c.min = 0;
-		dat->c.sec = 0;
-#else
-		dat->c.pd = 0;
-#endif
-		dat->c.flags = HAVE_JD | HAVE_DF | COMPLEX_DAT;
+		set_to_simple(&dat->s, nth, jd, sg, 0, 0, 0, HAVE_JD);
+	    } else {
+		if (!complex_dat_p(dat))
+		    rb_raise(rb_eArgError,
+			     "cannot load complex into simple");
+
+		set_to_complex(&dat->c, nth, jd, df, sf, of, sg,
+			       0, 0, 0, 0, 0, 0,
+			       HAVE_JD | HAVE_DF | COMPLEX_DAT);
 	    }
 	}
 	break;
@@ -6405,7 +6759,7 @@ d_lite_marshal_load(VALUE self, VALUE a)
 }
 
 
-/* datetime light */
+/* datetime */
 
 /*
  * call-seq:
@@ -6618,7 +6972,7 @@ datetime_s_civil(int argc, VALUE *argv, VALUE klass)
 	y = vy;
     }
 
-    if (isinf(sg) && sg < 0) {
+    if (style_p(y, sg) < 0) {
 	VALUE nth;
 	int ry, rm, rd, rh, rmin, rs;
 
@@ -7322,39 +7676,7 @@ datetime_s_jisx0301(int argc, VALUE *argv, VALUE klass)
 static VALUE
 dt_lite_to_s(VALUE self)
 {
-    get_d1(self);
-
-    if (f_zero_p(m_nth(dat))) {
-	int s, h, m;
-
-	decode_offset(m_of(dat), s, h, m);
-	return rb_enc_sprintf(rb_usascii_encoding(),
-			      "%.4d-%02d-%02dT"
-			      "%02d:%02d:%02d"
-			      "%c%02d:%02d",
-			      m_year(dat), m_mon(dat), m_mday(dat),
-			      m_hour(dat), m_min(dat), m_sec(dat),
-			      s, h, m);
-    }
-    else {
-	int s, h, m;
-	VALUE argv[10];
-
-	decode_offset(m_of(dat), s, h, m);
-	argv[0] = rb_usascii_str_new2("%.4d-%02d-%02dT"
-				      "%02d:%02d:%02d"
-				      "%c%02d:%02d");
-	argv[1] = m_real_year(dat);
-	argv[2] = INT2FIX(m_mon(dat));
-	argv[3] = INT2FIX(m_mday(dat));
-	argv[4] = INT2FIX(m_hour(dat));
-	argv[5] = INT2FIX(m_min(dat));
-	argv[6] = INT2FIX(m_sec(dat));
-	argv[7] = INT2FIX(s);
-	argv[8] = INT2FIX(h);
-	argv[9] = INT2FIX(m);
-	return rb_f_sprintf(10, argv);
-    }
+    return strftimev("%Y-%m-%dT%H:%M:%S%:z", self, set_tmx);
 }
 
 /*
@@ -7367,7 +7689,7 @@ static VALUE
 dt_lite_strftime(int argc, VALUE *argv, VALUE self)
 {
     return date_strftime_internal(argc, argv, self,
-				  "%FT%T%:z", d_lite_set_tmx);
+				  "%FT%T%:z", set_tmx);
 }
 
 static VALUE
@@ -7392,7 +7714,7 @@ dt_lite_iso8601_timediv(VALUE self, VALUE n)
     fmt = f_add3(rb_usascii_str_new2("T%T"),
 		 f,
 		 rb_usascii_str_new2("%:z"));
-    return strftimev(RSTRING_PTR(fmt), self, d_lite_set_tmx);
+    return strftimev(RSTRING_PTR(fmt), self, set_tmx);
 }
 
 /*
@@ -7413,7 +7735,7 @@ dt_lite_iso8601(int argc, VALUE *argv, VALUE self)
     if (argc < 1)
 	n = INT2FIX(0);
 
-    return f_add(strftimev("%F", self, d_lite_set_tmx),
+    return f_add(strftimev("%F", self, set_tmx),
 		 dt_lite_iso8601_timediv(self, n));
 }
 
@@ -7452,10 +7774,10 @@ dt_lite_jisx0301(int argc, VALUE *argv, VALUE self)
 	if (!gengo(m_real_local_jd(dat),
 		   m_real_year(dat),
 		   argv2))
-	    return f_add(strftimev("%F", self, d_lite_set_tmx),
+	    return f_add(strftimev("%F", self, set_tmx),
 			 dt_lite_iso8601_timediv(self, n));
 	return f_add(f_add(rb_f_sprintf(2, argv2),
-			   strftimev(".%m.%d", self, d_lite_set_tmx)),
+			   strftimev(".%m.%d", self, set_tmx)),
 		     dt_lite_iso8601_timediv(self, n));
     }
 }
@@ -7466,7 +7788,8 @@ dt_lite_jisx0301(int argc, VALUE *argv, VALUE self)
 #define f_subsec(x) rb_funcall(x, rb_intern("subsec"), 0)
 #define f_utc_offset(x) rb_funcall(x, rb_intern("utc_offset"), 0)
 #define f_local3(x,y,m,d) rb_funcall(x, rb_intern("local"), 3, y, m, d)
-#define f_utc6(x,y,m,d,h,min,s) rb_funcall(x, rb_intern("utc"), 6, y, m, d, h, min, s)
+#define f_utc6(x,y,m,d,h,min,s) rb_funcall(x, rb_intern("utc"), 6,\
+					   y, m, d, h, min, s)
 
 /*
  * call-seq:
@@ -7589,42 +7912,35 @@ date_to_date(VALUE self)
 static VALUE
 date_to_datetime(VALUE self)
 {
-    get_d1(self);
+    get_d1a(self);
 
-    if (simple_dat_p(dat))
-	return d_simple_new_internal(cDateTime,
-				     dat->s.nth,
-				     dat->s.jd,
-				     dat->s.sg,
-				     dat->s.year,
+    if (simple_dat_p(adat)) {
+	VALUE new = d_lite_s_alloc_simple(cDateTime);
+	{
+	    get_d1b(new);
+	    bdat->s = adat->s;
+	    return new;
+	}
+    }
+    else {
+	VALUE new = d_lite_s_alloc_complex(cDateTime);
+	{
+	    get_d1b(new);
+	    bdat->c = adat->c;
+	    bdat->c.df = 0;
+	    bdat->c.sf = INT2FIX(0);
 #ifndef USE_PACK
-				     dat->s.mon,
-				     dat->s.mday,
+	    bdat->c.hour = 0;
+	    bdat->c.min = 0;
+	    bdat->c.sec = 0;
 #else
-				     EX_MON(dat->s.pd),
-				     EX_MDAY(dat->s.pd),
+	    bdat->c.pc = PACK5(EX_MON(adat->c.pc), EX_MDAY(adat->c.pc),
+			       0, 0, 0);
+	    bdat->c.flags |= HAVE_DF | HAVE_TIME;
 #endif
-				     dat->s.flags);
-    else
-	return d_complex_new_internal(cDateTime,
-				      dat->c.nth,
-				      dat->c.jd,
-				      0,
-				      INT2FIX(0),
-				      dat->c.of,
-				      dat->c.sg,
-				      dat->c.year,
-#ifndef USE_PACK
-				      dat->c.mon,
-				      dat->c.mday,
-#else
-				      EX_MON(dat->c.pd),
-				      EX_MDAY(dat->c.pd),
-#endif
-				      0,
-				      0,
-				      0,
-				      dat->c.flags | HAVE_DF | HAVE_TIME);
+	    return new;
+	}
+    }
 }
 
 /*
@@ -7636,11 +7952,11 @@ date_to_datetime(VALUE self)
 static VALUE
 datetime_to_time(VALUE self)
 {
-    VALUE d, t;
-
-    d = copy_obj_with_new_offset(self, 0);
+    volatile VALUE dup = dup_obj_with_new_offset(self, 0);
     {
-	get_d1(d);
+	VALUE t;
+
+	get_d1(dup);
 
 	t = f_utc6(rb_cTime,
 		   m_real_year(dat),
@@ -7663,37 +7979,27 @@ datetime_to_time(VALUE self)
 static VALUE
 datetime_to_date(VALUE self)
 {
-    get_d1(self);
+    get_d1a(self);
 
-    if (simple_dat_p(dat))
-	return d_simple_new_internal(cDate,
-				     dat->s.nth,
-				     m_local_jd(dat),
-				     dat->s.sg,
-				     dat->s.year,
-#ifndef USE_PACK
-				     dat->s.mon,
-				     dat->s.mday,
-#else
-				     EX_MON(dat->s.pd),
-				     EX_MDAY(dat->s.pd),
-#endif
-				     dat->s.flags);
-    else
-	return d_simple_new_internal(cDate,
-				     dat->c.nth,
-				     m_local_jd(dat),
-				     dat->c.sg,
-				     dat->c.year,
-#ifndef USE_PACK
-				     dat->c.mon,
-				     dat->c.mday,
-#else
-				     EX_MON(dat->c.pd),
-				     EX_MDAY(dat->c.pd),
-#endif
-				     dat->c.flags &
-				     ~(HAVE_DF | HAVE_TIME | COMPLEX_DAT));
+    if (simple_dat_p(adat)) {
+	VALUE new = d_lite_s_alloc_simple(cDate);
+	{
+	    get_d1b(new);
+	    bdat->s = adat->s;
+	    bdat->s.jd = m_local_jd(adat);
+	    return new;
+	}
+    }
+    else {
+	VALUE new = d_lite_s_alloc_simple(cDate);
+	{
+	    get_d1b(new);
+	    copy_complex_to_simple(&bdat->s, &adat->c)
+	    bdat->s.jd = m_local_jd(adat);
+	    bdat->s.flags &= ~(HAVE_DF | HAVE_TIME | COMPLEX_DAT);
+	    return new;
+	}
+    }
 }
 
 /*
@@ -8192,8 +8498,8 @@ Init_date_core(void)
     rb_gc_register_mark_object(unix_epoch_in_ajd);
     rb_gc_register_mark_object(day_in_nanoseconds);
 
-    positive_inf = NUM2DBL(rb_const_get(rb_cFloat, rb_intern("INFINITY")));
-    negative_inf = -positive_inf;
+    positive_inf = +INFINITY;
+    negative_inf = -INFINITY;
 
     /*
      * Class representing a date.
@@ -8307,6 +8613,7 @@ Init_date_core(void)
 
 #ifndef NDEBUG
     rb_define_singleton_method(cDate, "new!", date_s_new_bang, -1);
+    rb_define_alias(rb_singleton_class(cDate), "new_l!", "new");
 #endif
 
     rb_define_singleton_method(cDate, "jd", date_s_jd, -1);
@@ -8341,10 +8648,13 @@ Init_date_core(void)
     rb_define_singleton_method(cDate, "jisx0301", date_s_jisx0301, -1);
 
 #ifndef NDEBUG
+    rb_define_method(cDate, "initialize", d_lite_initialize, -1);
+#endif
+    rb_define_method(cDate, "initialize_copy", d_lite_initialize_copy, 1);
+
+#ifndef NDEBUG
     rb_define_method(cDate, "fill", d_lite_fill, 0);
 #endif
-
-    rb_define_method(cDate, "initialize_copy", d_lite_initialize_copy, 1);
 
     rb_define_method(cDate, "ajd", d_lite_ajd, 0);
     rb_define_method(cDate, "amjd", d_lite_amjd, 0);
@@ -8360,22 +8670,12 @@ Init_date_core(void)
     rb_define_method(cDate, "day", d_lite_mday, 0);
     rb_define_method(cDate, "day_fraction", d_lite_day_fraction, 0);
 
-    rb_define_private_method(cDate, "wnum0", d_lite_wnum0, 0);
-    rb_define_private_method(cDate, "wnum1", d_lite_wnum1, 0);
-
-    rb_define_private_method(cDate, "hour", d_lite_hour, 0);
-    rb_define_private_method(cDate, "min", d_lite_min, 0);
-    rb_define_private_method(cDate, "minute", d_lite_min, 0);
-    rb_define_private_method(cDate, "sec", d_lite_sec, 0);
-    rb_define_private_method(cDate, "second", d_lite_sec, 0);
-    rb_define_private_method(cDate, "sec_fraction", d_lite_sec_fraction, 0);
-    rb_define_private_method(cDate, "second_fraction", d_lite_sec_fraction, 0);
-    rb_define_private_method(cDate, "offset", d_lite_offset, 0);
-    rb_define_private_method(cDate, "zone", d_lite_zone, 0);
-
     rb_define_method(cDate, "cwyear", d_lite_cwyear, 0);
     rb_define_method(cDate, "cweek", d_lite_cweek, 0);
     rb_define_method(cDate, "cwday", d_lite_cwday, 0);
+
+    rb_define_private_method(cDate, "wnum0", d_lite_wnum0, 0);
+    rb_define_private_method(cDate, "wnum1", d_lite_wnum1, 0);
 
     rb_define_method(cDate, "wday", d_lite_wday, 0);
 
@@ -8388,8 +8688,18 @@ Init_date_core(void)
     rb_define_method(cDate, "saturday?", d_lite_saturday_p, 0);
 
 #ifndef NDEBUG
-    rb_define_method(cDate, "nth_kday?", generic_nth_kday_p, 2);
+    rb_define_method(cDate, "nth_kday?", d_lite_nth_kday_p, 2);
 #endif
+
+    rb_define_private_method(cDate, "hour", d_lite_hour, 0);
+    rb_define_private_method(cDate, "min", d_lite_min, 0);
+    rb_define_private_method(cDate, "minute", d_lite_min, 0);
+    rb_define_private_method(cDate, "sec", d_lite_sec, 0);
+    rb_define_private_method(cDate, "second", d_lite_sec, 0);
+    rb_define_private_method(cDate, "sec_fraction", d_lite_sec_fraction, 0);
+    rb_define_private_method(cDate, "second_fraction", d_lite_sec_fraction, 0);
+    rb_define_private_method(cDate, "offset", d_lite_offset, 0);
+    rb_define_private_method(cDate, "zone", d_lite_zone, 0);
 
     rb_define_method(cDate, "julian?", d_lite_julian_p, 0);
     rb_define_method(cDate, "gregorian?", d_lite_gregorian_p, 0);
@@ -8420,9 +8730,9 @@ Init_date_core(void)
     rb_define_method(cDate, "next_year", d_lite_next_year, -1);
     rb_define_method(cDate, "prev_year", d_lite_prev_year, -1);
 
-    rb_define_method(cDate, "step", generic_step, -1);
-    rb_define_method(cDate, "upto", generic_upto, 1);
-    rb_define_method(cDate, "downto", generic_downto, 1);
+    rb_define_method(cDate, "step", d_lite_step, -1);
+    rb_define_method(cDate, "upto", d_lite_upto, 1);
+    rb_define_method(cDate, "downto", d_lite_downto, 1);
 
     rb_define_method(cDate, "<=>", d_lite_cmp, 1);
     rb_define_method(cDate, "===", d_lite_equal, 1);
@@ -8430,6 +8740,9 @@ Init_date_core(void)
     rb_define_method(cDate, "hash", d_lite_hash, 0);
 
     rb_define_method(cDate, "to_s", d_lite_to_s, 0);
+#ifndef NDEBUG
+    rb_define_method(cDate, "inspect_raw", d_lite_inspect_raw, 0);
+#endif
     rb_define_method(cDate, "inspect", d_lite_inspect, 0);
 
     rb_define_method(cDate, "strftime", d_lite_strftime, -1);
@@ -8444,14 +8757,15 @@ Init_date_core(void)
     rb_define_method(cDate, "httpdate", d_lite_httpdate, 0);
     rb_define_method(cDate, "jisx0301", d_lite_jisx0301, 0);
 
+#ifndef NDEBUG
+    rb_define_method(cDate, "marshal_dump_old", d_lite_marshal_dump_old, 0);
+#endif
     rb_define_method(cDate, "marshal_dump", d_lite_marshal_dump, 0);
     rb_define_method(cDate, "marshal_load", d_lite_marshal_load, 1);
 
     /* datetime */
 
     cDateTime = rb_define_class("DateTime", cDate);
-
-    rb_undef_method(CLASS_OF(cDateTime), "today");
 
     rb_define_singleton_method(cDateTime, "jd", datetime_s_jd, -1);
     rb_define_singleton_method(cDateTime, "ordinal", datetime_s_ordinal, -1);
@@ -8466,6 +8780,8 @@ Init_date_core(void)
     rb_define_singleton_method(cDateTime, "nth_kday",
 			       datetime_s_nth_kday, -1);
 #endif
+
+    rb_undef_method(CLASS_OF(cDateTime), "today");
 
     rb_define_singleton_method(cDateTime, "now", datetime_s_now, -1);
     rb_define_singleton_method(cDateTime, "_strptime",

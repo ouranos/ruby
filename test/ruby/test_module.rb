@@ -1069,7 +1069,7 @@ class TestModule < Test::Unit::TestCase
     assert_in_out_err([], src, ["NameError"], [])
   end
 
-  def test_mix
+  def test_mix_method
     american = Module.new do
       attr_accessor :address
     end
@@ -1096,5 +1096,35 @@ class TestModule < Test::Unit::TestCase
         mix japanese, :address => :jp_address, :address= => :jp_address=
       }
     }
+
+    japanese_american = Class.new
+    assert_nothing_raised(ArgumentError) {
+      japanese_american.class_eval {
+        mix japanese, :address => nil, :address= => nil
+      }
+    }
+    assert_raise(NoMethodError) {
+      japanese_american.new.address
+    }
+    assert_nothing_raised(ArgumentError) {
+      japanese_american.class_eval {
+        mix american
+      }
+    }
+  end
+
+  def test_mix_const
+    foo = Module.new do
+      const_set(:D, 55)
+    end
+    bar = Class.new do
+      const_set(:D, 42)
+    end
+    assert_nothing_raised(ArgumentError) {
+      bar.class_eval {
+        mix foo
+      }
+    }
+    assert_equal(42, bar::D)
   end
 end
