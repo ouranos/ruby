@@ -8,31 +8,50 @@
 #
 # $IPR: httpstatus.rb,v 1.11 2003/03/24 20:18:55 gotoyuzo Exp $
 
-module WEBrick
+module WEBrick # :nodoc:
 
+  ##
+  # This module is used to manager HTTP status codes.
+  # See http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html for more information.
   module HTTPStatus
 
+    ##
+    # Standard status class
+    # All other status class are inheriting from this one.
     class Status < StandardError
-      def initialize(*args)
+      def initialize(*args) # :nodoc:
         args[0] = AccessLog.escape(args[0]) unless args.empty?
         super(*args)
       end
       class << self
-        attr_reader :code, :reason_phrase
+        attr_reader :code, :reason_phrase # :nodoc:
       end
+      
+      # Returns the HTTP status code
       def code() self::class::code end
+      
+      # Returns the HTTP status description
       def reason_phrase() self::class::reason_phrase end
-      alias to_i code
+      
+      alias to_i code # :nodoc:
     end
+
+    # See Status
     class Info        < Status; end
+    # See Status
     class Success     < Status; end
+    # See Status
     class Redirect    < Status; end
+    # See Status
     class Error       < Status; end
+    # See Status
     class ClientError < Error; end
+    # See Status
     class ServerError < Error; end
 
     class EOFError < StandardError; end
 
+    # HTTP status codes and descriptions
     StatusMessage = {
       100 => 'Continue',
       101 => 'Switching Protocols',
@@ -76,8 +95,11 @@ module WEBrick
       505 => 'HTTP Version Not Supported'
     }
 
+    # Map status code to the corresponding Status class
     CodeToError = {}
 
+    # Creates a status/error class for each status code and
+    # populates the +CodeToError+ map.
     StatusMessage.each{|code, message|
       message.freeze
       var_name = message.gsub(/[ \-]/,'_').upcase
@@ -99,28 +121,57 @@ module WEBrick
       CodeToError[code] = err_class
     }
 
+    ##
+    # Returns the description corresponding to the HTTP status +code+
+    #
+    #   WEBrick::HTTPStatus.reason_phrase 404
+    #   => "Not Found"
     def reason_phrase(code)
       StatusMessage[code.to_i]
     end
+
+    ##
+    # Is it an informational status?
     def info?(code)
       code.to_i >= 100 and code.to_i < 200
     end
+    
+    ##
+    # Is it a successful status?
     def success?(code)
       code.to_i >= 200 and code.to_i < 300
     end
+    
+    ##
+    # Is it a redirection status?
     def redirect?(code)
       code.to_i >= 300 and code.to_i < 400
     end
+    
+    ##
+    # Is it an error status?
     def error?(code)
       code.to_i >= 400 and code.to_i < 600
     end
+    
+    ##
+    # Is it a client error status?
     def client_error?(code)
       code.to_i >= 400 and code.to_i < 500
     end
+    
+    ##
+    # Is it a server error status?
     def server_error?(code)
       code.to_i >= 500 and code.to_i < 600
     end
 
+    ##
+    # Return the status class corresponding to +code+
+    #
+    #   WEBrick::HTTPStatus[302]
+    #   => WEBrick::HTTPStatus::NotFound
+    #
     def self.[](code)
       CodeToError[code]
     end
